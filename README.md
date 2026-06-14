@@ -33,6 +33,7 @@ coin-pusher sessions.
 ## Projects
 
 - `src/CoinPusher.Engine` - domain model, simulator, verifier, and planner
+- `src/CoinPusher.Engine.App` - runnable console app/demo
 - `tests/CoinPusher.Engine.Tests` - dependency-free executable test harness
 
 ## Source layout
@@ -114,7 +115,13 @@ var result = new CoinPusherSimulator(trace).Replay(plan);
 To see a complete trace demo:
 
 ```bash
-dotnet run --project tests/CoinPusher.Engine.Tests -- --trace-demo
+dotnet run --project src/CoinPusher.Engine.App
+```
+
+Use `--quiet` to print only the final summary:
+
+```bash
+dotnet run --project src/CoinPusher.Engine.App -- --quiet
 ```
 
 ## Build and test
@@ -122,6 +129,7 @@ dotnet run --project tests/CoinPusher.Engine.Tests -- --trace-demo
 ```bash
 dotnet build CoinPusherOutcomeEngine.sln
 dotnet run --project tests/CoinPusher.Engine.Tests
+dotnet run --project src/CoinPusher.Engine.App -- --quiet
 ```
 
 These commands require the .NET 8 SDK.
