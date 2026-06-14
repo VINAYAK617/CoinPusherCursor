@@ -160,11 +160,12 @@ static void ConsoleTracePrintsBoardFormationAndSpinStates()
     }
 
     var output = writer.ToString();
-    Assert.Contains(output, "[board-planner] Backward reconstructing");
-    Assert.Contains(output, "=== planned start board for spin 0 ===");
-    Assert.Contains(output, "=== spin 0 start ===");
-    Assert.Contains(output, "target harvest:");
-    Assert.Contains(output, "=== spin 0 after rotation ===");
+    Assert.Contains(output, "[board-planner] BACKWARD BOARD RECONSTRUCTION");
+    Assert.Contains(output, "Where this board came from:");
+    Assert.Contains(output, "=== forward spin 1 start board produced by reverse reconstruction ===");
+    Assert.Contains(output, "=== forward spin 1 - board at start ===");
+    Assert.Contains(output, "Planned harvest from bottom rows before push:");
+    Assert.Contains(output, "=== forward spin 1 - after clockwise rotation ===");
     Assert.Contains(output, "[simulator] Replay end.");
 }
 

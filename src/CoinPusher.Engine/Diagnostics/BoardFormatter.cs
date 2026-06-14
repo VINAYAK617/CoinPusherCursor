@@ -10,6 +10,7 @@ public static class BoardFormatter
 
         var builder = new StringBuilder();
         builder.AppendLine("      Pushers");
+        builder.AppendLine("      Legend: Ax7 = objective symbol A stack 7, Gx1* = filler/safe symbol, . = empty");
         builder.AppendLine();
         builder.AppendLine("    C0       C1       C2       C3       C4");
 

@@ -14,32 +14,58 @@ public sealed class BackwardBoardPlanner : IBackwardBoardPlanner
     public IReadOnlyList<PlannedCollectionBatch> Build(TimelinePlan timelinePlan)
     {
         ArgumentNullException.ThrowIfNull(timelinePlan);
-        Trace($"[board-planner] Backward reconstructing {timelinePlan.SpinCount} spin board states.");
+        Trace("[board-planner] BACKWARD BOARD RECONSTRUCTION");
+        Trace("[board-planner] Forward runtime is: start board -> collect -> rotate clockwise -> spawn -> next board.");
+        Trace("[board-planner] Reverse planner does: next board -> remove spawns -> rotate anti-clockwise -> restore collected rows -> previous start board.");
+        Trace($"[board-planner] Reconstructing {timelinePlan.SpinCount} spin start boards from the end of the game back to spin 1.");
 
         var reversedBatches = new Stack<PlannedCollectionBatch>();
         var nextStartBoard = BuildFinalNonWinBoard(timelinePlan.SpinCount);
-        TraceBoard("final non-win board seed", nextStartBoard);
+        TraceBoard(
+            "seed board after the last spin finishes (safe filler only)",
+            nextStartBoard);
 
         for (var spinIndex = timelinePlan.Spins.Count - 1; spinIndex >= 0; spinIndex--)
         {
             var spin = timelinePlan.Spins[spinIndex];
+            var displaySpin = spin.SpinIndex + 1;
             var columnContributions = AssignContributionsToColumns(spin);
             var pushValues = columnContributions
                 .Select(contributions => Math.Max(EngineConstants.MinimumPushValue, contributions.Count))
                 .ToArray();
+            Trace("");
+            Trace($"[reverse spin {displaySpin}] Goal: build the board that the player will see at START of forward spin {displaySpin}.");
+            Trace($"[reverse spin {displaySpin}] Known later board: this is the board after forward spin {displaySpin} already collected, rotated, and spawned.");
+            Trace($"[reverse spin {displaySpin}] Planned forward harvest: {FormatContributions(spin.Contributions)}");
+            Trace($"[reverse spin {displaySpin}] Chosen pushers: [{string.Join("] [", pushValues)}]");
+            TraceBoard(
+                $"reverse spin {displaySpin} input - later board / next spin start",
+                nextStartBoard);
+
             var (afterRotation, spawns) = RemoveSpawns(nextStartBoard, pushValues);
+            Trace($"[reverse spin {displaySpin}] Step 1: remove cells that must have been spawned at the END of forward spin {displaySpin}.");
+            Trace($"[reverse spin {displaySpin}] Spawn plan created for forward replay: {FormatSpawns(spawns)}");
+            TraceBoard(
+                $"reverse spin {displaySpin} step 1 - after removing spawned cells",
+                afterRotation);
+
             var afterCollection = afterRotation.Clone();
             afterCollection.Rotate(BoardRotation.CounterClockwise);
+            Trace($"[reverse spin {displaySpin}] Step 2: rotate anti-clockwise to undo the forward clockwise rotation.");
+            TraceBoard(
+                $"reverse spin {displaySpin} step 2 - after anti-clockwise undo rotation",
+                afterCollection);
+
             var startBoard = RestoreCollections(spin.SpinIndex, afterCollection, pushValues, columnContributions);
+            Trace($"[reverse spin {displaySpin}] Step 3: restore the bottom collected rows so forward play collects exactly: {FormatContributions(spin.Contributions)}");
+            Trace($"[reverse spin {displaySpin}] Result: this is the START board for forward spin {displaySpin}.");
+            TraceBoard(
+                $"forward spin {displaySpin} start board produced by reverse reconstruction",
+                startBoard);
 
             var batch = new PlannedCollectionBatch(startBoard, pushValues, spawns);
             reversedBatches.Push(batch);
             nextStartBoard = startBoard;
-
-            Trace($"[board-planner] Spin {spin.SpinIndex}: restored contributions={spin.Contributions.Count}, pushers=[{string.Join(", ", pushValues)}], spawns={spawns.Count}");
-            TraceBoard($"spin {spin.SpinIndex} after removing spawns", afterRotation);
-            TraceBoard($"spin {spin.SpinIndex} after anticlockwise undo rotation", afterCollection);
-            TraceBoard($"planned start board for spin {spin.SpinIndex}", startBoard);
         }
 
         return reversedBatches.ToArray();
@@ -152,6 +178,36 @@ public sealed class BackwardBoardPlanner : IBackwardBoardPlanner
             BoardRotation.None => position,
             _ => throw new PlanningException($"Unsupported board rotation '{rotation}'.")
         };
+
+    private static string FormatContributions(IReadOnlyList<ContributionUnit> contributions)
+    {
+        if (contributions.Count == 0)
+        {
+            return "none (only filler symbols may be collected)";
+        }
+
+        return string.Join(
+            ", ",
+            contributions
+                .GroupBy(contribution => contribution.ObjectiveId, StringComparer.Ordinal)
+                .OrderBy(group => group.Key, StringComparer.Ordinal)
+                .Select(group => $"{group.Key}+={group.Sum(contribution => contribution.Amount)}"));
+    }
+
+    private static string FormatSpawns(IReadOnlyList<SpawnInstruction> spawns)
+    {
+        if (spawns.Count == 0)
+        {
+            return "none";
+        }
+
+        return string.Join(
+            ", ",
+            spawns
+                .OrderBy(spawn => spawn.Position.Row)
+                .ThenBy(spawn => spawn.Position.Column)
+                .Select(spawn => $"{spawn.Position}={spawn.Cell}"));
+    }
 
     private void Trace(string message)
     {

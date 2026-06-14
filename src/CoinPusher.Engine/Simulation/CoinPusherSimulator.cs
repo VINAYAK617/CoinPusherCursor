@@ -33,6 +33,7 @@ public sealed class CoinPusherSimulator : IGameSimulator
 
         for (var spinIndex = 0; spinIndex < plan.Spins.Count; spinIndex++)
         {
+            var displaySpin = spinIndex + 1;
             if (spinIndex >= availableSpins)
             {
                 throw new SimulationException($"Spin {spinIndex} is not available. Add extra spins before planning beyond {availableSpins} spins.");
@@ -52,32 +53,40 @@ public sealed class CoinPusherSimulator : IGameSimulator
             var startBoard = board.Clone();
             var spinCollections = new List<CollectionEvent>();
 
-            Trace($"[spin {spinIndex}] start: pushers=[{string.Join(", ", spin.PushValues)}], rotation={spin.Rotation}");
-            TraceBoard($"spin {spinIndex} start", board);
+            Trace("");
+            Trace($"[forward spin {displaySpin}] START");
+            Trace($"[forward spin {displaySpin}] Where this board came from: {(spinIndex == 0 ? "initial board produced by backward reconstruction" : $"previous spin {displaySpin - 1} after spawn/end")}");
+            Trace($"[forward spin {displaySpin}] Pushers: [{string.Join("] [", spin.PushValues)}]");
+            Trace($"[forward spin {displaySpin}] Planned rotation after collection: {spin.Rotation}");
+            TraceBoard($"forward spin {displaySpin} - board at start", board);
 
             ApplyFeatureLandings(board, spin);
-            TraceBoard($"spin {spinIndex} after feature landing", board);
+            TraceBoard($"forward spin {displaySpin} - after feature landing", board);
 
             ApplyFeatureActions(board, spin, prizeLevels, collectionCounts, targetCounts, spinCollections, ref availableSpins);
-            Trace($"[spin {spinIndex}] after feature activation: availableSpins={availableSpins}, prizes={BoardFormatter.FormatPrizeLevels(prizeLevels)}");
-            TraceBoard($"spin {spinIndex} after feature activation", board);
+            Trace($"[forward spin {displaySpin}] After feature activation: availableSpins={availableSpins}, prizes={BoardFormatter.FormatPrizeLevels(prizeLevels)}");
+            TraceBoard($"forward spin {displaySpin} - after feature activation", board);
 
             ApplyFeatureConversions(board, spin);
-            TraceBoard($"spin {spinIndex} after feature conversion", board);
+            TraceBoard($"forward spin {displaySpin} - after feature conversion", board);
 
-            Trace($"[spin {spinIndex}] target harvest: {FormatProjectedHarvest(board, spin, targetCounts)}");
+            Trace($"[forward spin {displaySpin}] Planned harvest from bottom rows before push: {FormatProjectedHarvest(board, spin, targetCounts)}");
+            Trace($"[forward spin {displaySpin}] Collection step: each pusher removes that many cells from the bottom of its column.");
             ApplyPushes(board, spin, collectionCounts, targetCounts, spinCollections);
-            Trace($"[spin {spinIndex}] collections: {FormatCollections(spinCollections)}");
-            Trace($"[spin {spinIndex}] counts: {BoardFormatter.FormatCounts(collectionCounts)}");
-            TraceBoard($"spin {spinIndex} after collection", board);
+            Trace($"[forward spin {displaySpin}] Actually collected: {FormatCollections(spinCollections)}");
+            Trace($"[forward spin {displaySpin}] Cumulative counts now: {BoardFormatter.FormatCounts(collectionCounts)}");
+            TraceBoard($"forward spin {displaySpin} - after collection / before rotation", board);
 
+            Trace($"[forward spin {displaySpin}] Rotation step: rotate clockwise to create empty spawn space.");
             board.Rotate(spin.Rotation);
             board.Validate();
-            TraceBoard($"spin {spinIndex} after rotation", board);
+            TraceBoard($"forward spin {displaySpin} - after clockwise rotation", board);
 
+            Trace($"[forward spin {displaySpin}] Spawn step: fill the empty cells using the spawn plan created during backward reconstruction.");
+            Trace($"[forward spin {displaySpin}] Spawn plan: {FormatSpawns(spin.Spawns)}");
             ApplySpawns(board, spin);
             board.Validate();
-            TraceBoard($"spin {spinIndex} after spawn/end", board);
+            TraceBoard($"forward spin {displaySpin} - after spawn / next spin start", board);
 
             spinResults.Add(new SpinSimulationResult(spinIndex, startBoard, board.Clone(), spinCollections));
             timeline.Add(board.Clone());
@@ -449,6 +458,21 @@ public sealed class CoinPusherSimulator : IGameSimulator
         }
 
         return projected.Count == 0 ? "none" : BoardFormatter.FormatCounts(projected);
+    }
+
+    private static string FormatSpawns(IReadOnlyList<SpawnInstruction> spawns)
+    {
+        if (spawns.Count == 0)
+        {
+            return "none";
+        }
+
+        return string.Join(
+            ", ",
+            spawns
+                .OrderBy(spawn => spawn.Position.Row)
+                .ThenBy(spawn => spawn.Position.Column)
+                .Select(spawn => $"{spawn.Position}={spawn.Cell}"));
     }
 
     private void Trace(string message)
