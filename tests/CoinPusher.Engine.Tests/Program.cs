@@ -11,6 +11,7 @@ var tests = new (string Name, Action Run)[]
     ("planner creates exact verified outcome", PlannerCreatesExactVerifiedOutcome),
     ("planner uses clockwise rotation and paced timeline", PlannerUsesClockwiseRotationAndPacedTimeline),
     ("backward reconstruction produces continuous boards", BackwardReconstructionProducesContinuousBoards),
+    ("normal planner does not create unearned stacks", NormalPlannerDoesNotCreateUnearnedStacks),
     ("timeline planner requests extra spin capacity", TimelinePlannerRequestsExtraSpinCapacity),
     ("console trace prints board formation and spin states", ConsoleTracePrintsBoardFormationAndSpinStates),
     ("wheel uses documented stack increment formula", WheelUsesDocumentedStackIncrementFormula),
@@ -131,14 +132,47 @@ static void BackwardReconstructionProducesContinuousBoards()
     }
 }
 
+static void NormalPlannerDoesNotCreateUnearnedStacks()
+{
+    var request = OutcomeRequest.Create(
+        100,
+        new[]
+        {
+            new ObjectiveRequirement("A", 30),
+            new ObjectiveRequirement("B", 30),
+            new ObjectiveRequirement("C", 20),
+            new ObjectiveRequirement("D", 15)
+        },
+        new PaytableConfiguration(new Dictionary<string, PrizeTableEntry>
+        {
+            ["A"] = new(25, 25, 25),
+            ["B"] = new(25, 25, 25),
+            ["C"] = new(25, 25, 25),
+            ["D"] = new(25, 25, 25)
+        }));
+
+    var plan = new OutcomePlanner().Generate(request);
+
+    foreach (var board in plan.BoardStates)
+    {
+        foreach (var (_, cell) in board.Cells())
+        {
+            if (cell.Kind == CellKind.Symbol && cell.Symbol!.ContributesToObjective)
+            {
+                Assert.Equal(1, cell.Symbol.StackSize);
+            }
+        }
+    }
+}
+
 static void TimelinePlannerRequestsExtraSpinCapacity()
 {
     var objectives = new[] { new ObjectiveRequirement("A", 600) };
     var contributionPlan = new ContributionPlanner().Plan(objectives);
     var timeline = new TimelinePlanner().Plan(contributionPlan, new FeatureConfiguration());
 
-    Assert.Equal(6, timeline.SpinCount);
-    Assert.Equal(1, timeline.ExtraSpinsRequired);
+    Assert.Equal(40, timeline.SpinCount);
+    Assert.Equal(35, timeline.ExtraSpinsRequired);
     Assert.True(timeline.Spins.All(spin => spin.Contributions.Count <= 15), "No spin should exceed pusher collection capacity.");
 }
 

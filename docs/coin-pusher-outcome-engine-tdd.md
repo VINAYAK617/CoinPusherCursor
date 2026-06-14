@@ -165,7 +165,17 @@ The verifier rejects both undercollection and overcollection.
 
 ## 6. Stacks
 
-Symbols may have stack values.
+Symbols may have stack values, but the planner must not invent stacked objective
+symbols during normal board reconstruction.
+
+Normal reconstructed objective symbols are always:
+
+```text
+A x1
+```
+
+Stacked objective symbols are valid only if a prior feature path creates them,
+for example a Wheel feature.
 
 Example:
 
@@ -186,6 +196,20 @@ Maximum stack:
 ```
 
 If a feature tries to increase a stack above 7, it is capped at 7.
+
+Invalid normal spawn/reconstruction:
+
+```text
+D x7 appears without Wheel or another stack-producing feature
+```
+
+Valid:
+
+```text
+Wheel targets D
+D x1 becomes D x4
+Later spin collects D x4
+```
 
 ---
 
@@ -731,14 +755,14 @@ Example:
 A = 30
 ```
 
-Could become:
+Normal contribution planning becomes individual single-symbol units:
 
 ```text
-A x7
-A x7
-A x7
-A x7
-A x2
+A x1
+A x1
+A x1
+...
+A x1
 ```
 
 Total:
@@ -746,6 +770,9 @@ Total:
 ```text
 30
 ```
+
+The planner may later optimize some of those units into Wheel-created stacks,
+but it must not place `A x7` directly onto the board without a feature path.
 
 ### Feasibility Solver
 

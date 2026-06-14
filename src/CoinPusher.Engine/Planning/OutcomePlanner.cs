@@ -151,17 +151,18 @@ public sealed class OutcomePlanner : IOutcomePlanner
     {
         foreach (var builder in spinBuilders)
         {
-            foreach (var position in FindFeatureLandingSlots(builder.StartBoard, builder.PushValues))
+            foreach (var position in FindFeatureLandingSlots(builder.StartBoard))
             {
                 if (builder.ReservedFeaturePositions.Contains(position))
                 {
                     continue;
                 }
 
+                var replacement = builder.StartBoard.Get(position);
                 builder.ReservedFeaturePositions.Add(position);
                 builder.FeatureLandings.Add(new FeatureLanding(position, new FeatureToken(pendingFeature.Kind)));
                 builder.FeatureActions.Add(pendingFeature.CreateAction(position));
-                builder.FeatureConversions.Add(new FeatureConversion(position, BoardCell.Empty));
+                builder.FeatureConversions.Add(new FeatureConversion(position, replacement));
                 return true;
             }
         }
@@ -169,12 +170,11 @@ public sealed class OutcomePlanner : IOutcomePlanner
         return false;
     }
 
-    private static IEnumerable<BoardPosition> FindFeatureLandingSlots(BoardState board, IReadOnlyList<int> pushValues)
+    private static IEnumerable<BoardPosition> FindFeatureLandingSlots(BoardState board)
     {
-        for (var column = 0; column < EngineConstants.BoardColumns; column++)
+        for (var row = 0; row < EngineConstants.BoardRows; row++)
         {
-            var firstCollectedRow = EngineConstants.BoardRows - pushValues[column];
-            for (var row = firstCollectedRow; row < EngineConstants.BoardRows; row++)
+            for (var column = 0; column < EngineConstants.BoardColumns; column++)
             {
                 var position = new BoardPosition(row, column);
                 var cell = board.Get(position);

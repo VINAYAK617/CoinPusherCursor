@@ -13,12 +13,9 @@ public sealed class ContributionPlanner : IContributionPlanner
         {
             allocations.Add(new ObjectiveContributionAllocation(objective.Id, objective.TargetCount, 0, 0));
 
-            var remaining = objective.TargetCount;
-            while (remaining > 0)
+            for (var count = 0; count < objective.TargetCount; count++)
             {
-                var amount = Math.Min(EngineConstants.MaximumStackSize, remaining);
-                units.Add(new ContributionUnit(objective.Id, amount, ContributionSource.Normal));
-                remaining -= amount;
+                units.Add(new ContributionUnit(objective.Id, 1, ContributionSource.Normal));
             }
         }
 
