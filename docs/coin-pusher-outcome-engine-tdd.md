@@ -1000,7 +1000,77 @@ Prizes   : A=Upgrade2, B=Upgrade2, C=Upgrade2, D=Upgrade2
 
 ---
 
-## 23. Hard Invariants
+## 23. Protocol JSON Export
+
+The engine can export a generated `GamePlan` into a client-facing JSON shape.
+
+Run:
+
+```bash
+dotnet run --project src/CoinPusher.Engine.App -- --json
+```
+
+Output shape:
+
+```json
+{
+  "startingBoard": [
+    [ { "id": 1 }, { "id": 2 }, { "id": 3 }, { "id": 4 }, { "id": 5 } ]
+  ],
+  "turns": [
+    {
+      "pushers": [
+        { "pushValue": 3 },
+        { "pushValue": 3 },
+        { "pushValue": 3 },
+        { "pushValue": 3 },
+        { "pushValue": 3 }
+      ],
+      "spawns": [
+        { "Pos": 2, "id": 4 },
+        {
+          "Pos": 14,
+          "id": 11,
+          "feature": {
+            "featureId": 11,
+            "convertToId": 2,
+            "wheelSymbolId": 2,
+            "wheelStackMultiplier": 4,
+            "fReTrigger": []
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+Export details:
+
+- `startingBoard` is the board at the beginning of the session.
+- `turns[n].pushers` contains one pusher entry per column.
+- `turns[n].spawns` contains cells spawned for that turn plus feature landing metadata when present.
+- `Pos` is linear board position:
+
+```text
+Pos = row * 5 + column
+```
+
+- `id` is the numeric symbol or feature id from the export id map.
+- Feature payloads are optional and appear only when the cell represents a feature.
+
+The default export id map is:
+
+```text
+A=1, B=2, C=3, D=4, E=5, F=6, G=7, H=8, I=9, J=10
+Wheel=11, ExtraSpin=12, PrizeUpgrade=13, Flush=14
+```
+
+Production integrations can provide a custom `ExportIdMap`.
+
+---
+
+## 24. Hard Invariants
 
 The engine must never allow:
 
@@ -1019,7 +1089,7 @@ If any of these happen, the plan is invalid.
 
 ---
 
-## 24. Current Implementation Map
+## 25. Current Implementation Map
 
 Source layout:
 
@@ -1072,7 +1142,7 @@ dotnet run --project src/CoinPusher.Engine.App -- --quiet
 
 ---
 
-## 25. Final Success Condition
+## 26. Final Success Condition
 
 A generated session is successful only when:
 

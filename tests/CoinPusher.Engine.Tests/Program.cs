@@ -1,4 +1,5 @@
 using CoinPusher.Engine;
+using System.Text.Json;
 
 if (args.Contains("--trace-demo", StringComparer.Ordinal))
 {
@@ -14,6 +15,7 @@ var tests = new (string Name, Action Run)[]
     ("normal planner does not create unearned stacks", NormalPlannerDoesNotCreateUnearnedStacks),
     ("timeline planner requests extra spin capacity", TimelinePlannerRequestsExtraSpinCapacity),
     ("console trace prints board formation and spin states", ConsoleTracePrintsBoardFormationAndSpinStates),
+    ("json exporter emits requested protocol shape", JsonExporterEmitsRequestedProtocolShape),
     ("wheel uses documented stack increment formula", WheelUsesDocumentedStackIncrementFormula),
     ("wheel caps stacks and harvests potential", WheelCapsStacksAndHarvestsPotential),
     ("non-target symbols count but stay below threshold", NonTargetSymbolsCountButStayBelowThreshold),
@@ -206,6 +208,32 @@ static void ConsoleTracePrintsBoardFormationAndSpinStates()
     Assert.Contains(output, "Planned harvest from bottom rows before push:");
     Assert.Contains(output, "=== forward spin 1 - after clockwise rotation ===");
     Assert.Contains(output, "[simulator] Replay end.");
+}
+
+static void JsonExporterEmitsRequestedProtocolShape()
+{
+    var request = SimpleTraceRequest();
+    var plan = new OutcomePlanner().Generate(request);
+    var json = new GamePlanJsonExporter().Export(plan);
+    using var document = JsonDocument.Parse(json);
+    var root = document.RootElement;
+
+    Assert.True(root.TryGetProperty("startingBoard", out var startingBoard), "JSON should include startingBoard.");
+    Assert.Equal(5, startingBoard.GetArrayLength());
+    Assert.Equal(5, startingBoard[0].GetArrayLength());
+    Assert.True(startingBoard[0][0].TryGetProperty("id", out _), "Board cells should include id.");
+
+    Assert.True(root.TryGetProperty("turns", out var turns), "JSON should include turns.");
+    Assert.Equal(plan.Spins.Count, turns.GetArrayLength());
+    Assert.True(turns[0].TryGetProperty("pushers", out var pushers), "Turn should include pushers.");
+    Assert.Equal(5, pushers.GetArrayLength());
+    Assert.True(pushers[0].TryGetProperty("pushValue", out _), "Pusher should include pushValue.");
+    Assert.True(turns[0].TryGetProperty("spawns", out var spawns), "Turn should include spawns.");
+    if (spawns.GetArrayLength() > 0)
+    {
+        Assert.True(spawns[0].TryGetProperty("Pos", out _), "Spawn should include Pos.");
+        Assert.True(spawns[0].TryGetProperty("id", out _), "Spawn should include id.");
+    }
 }
 
 static void WheelUsesDocumentedStackIncrementFormula()

@@ -129,12 +129,19 @@ Use `--quiet` to print only the final summary:
 dotnet run --project src/CoinPusher.Engine.App -- --quiet
 ```
 
+Use `--json` to print the protocol payload:
+
+```bash
+dotnet run --project src/CoinPusher.Engine.App -- --json
+```
+
 ## Build and test
 
 ```bash
 dotnet build CoinPusherOutcomeEngine.sln
 dotnet run --project tests/CoinPusher.Engine.Tests
 dotnet run --project src/CoinPusher.Engine.App -- --quiet
+dotnet run --project src/CoinPusher.Engine.App -- --json
 ```
 
 These commands require the .NET 8 SDK.

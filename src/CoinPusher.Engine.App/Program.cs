@@ -1,20 +1,46 @@
 using CoinPusher.Engine;
 
 var traceEnabled = !args.Contains("--quiet", StringComparer.OrdinalIgnoreCase);
+var jsonEnabled = args.Contains("--json", StringComparer.OrdinalIgnoreCase);
 IEngineTraceSink trace = traceEnabled ? new ConsoleEngineTraceSink() : NullEngineTraceSink.Instance;
 
-Console.WriteLine("Coin Pusher Outcome Engine");
-Console.WriteLine("==========================");
-Console.WriteLine(traceEnabled
-    ? "Trace: enabled. Use --quiet to print only the final summary."
-    : "Trace: disabled.");
-Console.WriteLine();
+if (jsonEnabled)
+{
+    trace = NullEngineTraceSink.Instance;
+}
+else
+{
+    Console.WriteLine("Coin Pusher Outcome Engine");
+    Console.WriteLine("==========================");
+    Console.WriteLine(traceEnabled
+        ? "Trace: enabled. Use --quiet to print only the final summary."
+        : "Trace: disabled.");
+    Console.WriteLine();
+}
 
 var request = CreateDemoRequest();
 var planner = new OutcomePlanner(trace: trace);
 var plan = planner.Generate(request);
 var verifier = new GamePlanVerifier();
 var report = verifier.Verify(plan);
+
+if (jsonEnabled)
+{
+    if (!report.IsValid)
+    {
+        Console.Error.WriteLine("Generated plan failed verification.");
+        foreach (var issue in report.Issues)
+        {
+            Console.Error.WriteLine($"- {issue.Code}: {issue.Message}");
+        }
+
+        Environment.ExitCode = 1;
+        return;
+    }
+
+    Console.WriteLine(new GamePlanJsonExporter().Export(plan));
+    return;
+}
 
 Console.WriteLine();
 Console.WriteLine("Final Result");
