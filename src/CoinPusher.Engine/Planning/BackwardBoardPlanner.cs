@@ -18,8 +18,8 @@ public sealed class BackwardBoardPlanner : IBackwardBoardPlanner
         Trace($"[board-planner] Reconstructing {timelinePlan.SpinCount} spin start boards from the end of the game back to spin 1.");
 
         var reversedBatches = new Stack<PlannedCollectionBatch>();
-        var plannedNonTargetCollections = timelinePlan.SymbolThresholds.Keys.ToDictionary(symbol => symbol, _ => 0, StringComparer.Ordinal);
-        var nextStartBoard = BuildFinalNonWinBoard(timelinePlan);
+        var nonTargetSelector = new NonTargetSymbolSelector(timelinePlan);
+        var nextStartBoard = BuildFinalNonWinBoard(timelinePlan, nonTargetSelector);
         TraceBoard(
             "seed board after the last spin finishes (non-target symbols below threshold)",
             nextStartBoard);
@@ -61,7 +61,7 @@ public sealed class BackwardBoardPlanner : IBackwardBoardPlanner
                 pushValues,
                 columnContributions,
                 timelinePlan,
-                plannedNonTargetCollections);
+                nonTargetSelector);
             Trace($"[reverse spin {displaySpin}] Step 3: restore the bottom collected rows so forward play collects exactly: {FormatContributions(spin.Contributions)}");
             Trace($"[reverse spin {displaySpin}] Result: this is the START board for forward spin {displaySpin}.");
             TraceBoard(
@@ -76,7 +76,7 @@ public sealed class BackwardBoardPlanner : IBackwardBoardPlanner
         return reversedBatches.ToArray();
     }
 
-    private BoardState BuildFinalNonWinBoard(TimelinePlan timelinePlan)
+    private static BoardState BuildFinalNonWinBoard(TimelinePlan timelinePlan, NonTargetSymbolSelector nonTargetSelector)
     {
         var board = BoardState.Empty();
         for (var row = 0; row < EngineConstants.BoardRows; row++)
@@ -84,27 +84,11 @@ public sealed class BackwardBoardPlanner : IBackwardBoardPlanner
             for (var column = 0; column < EngineConstants.BoardColumns; column++)
             {
                 var position = new BoardPosition(row, column);
-                board.Set(position, CreateSafeNonCollectedCell(timelinePlan.SpinCount, position, timelinePlan));
+                board.Set(position, nonTargetSelector.CreateDecorativeCell(timelinePlan.SpinCount, position));
             }
         }
 
         return board;
-    }
-
-    private static BoardCell CreateSafeNonCollectedCell(int spinIndex, BoardPosition position, TimelinePlan timelinePlan)
-    {
-        var symbolId = timelinePlan.SymbolThresholds.Keys
-            .Where(symbol => !timelinePlan.ObjectiveIds.Contains(symbol))
-            .OrderBy(symbol => StableScore(symbol, spinIndex, position))
-            .ThenBy(symbol => symbol, StringComparer.Ordinal)
-            .FirstOrDefault();
-
-        if (symbolId is null)
-        {
-            return BoardCell.Empty;
-        }
-
-        return BoardCell.FromSymbol(symbolId);
     }
 
     private static IReadOnlyList<ContributionUnit>[] AssignContributionsToColumns(TimelineSpinContributions spin)
@@ -159,7 +143,7 @@ public sealed class BackwardBoardPlanner : IBackwardBoardPlanner
         IReadOnlyList<int> pushValues,
         IReadOnlyList<ContributionUnit>[] columnContributions,
         TimelinePlan timelinePlan,
-        IDictionary<string, int> plannedNonTargetCollections)
+        NonTargetSymbolSelector nonTargetSelector)
     {
         var startBoard = BoardState.Empty();
 
@@ -183,38 +167,13 @@ public sealed class BackwardBoardPlanner : IBackwardBoardPlanner
                 }
                 else
                 {
-                    startBoard.Set(position, CreateSafeNonTargetCell(spinIndex, position, timelinePlan, plannedNonTargetCollections));
+                    startBoard.Set(position, nonTargetSelector.CreateCollectedCell(spinIndex, position));
                 }
             }
         }
 
         startBoard.Validate();
         return startBoard;
-    }
-
-    private BoardCell CreateSafeNonTargetCell(
-        int spinIndex,
-        BoardPosition position,
-        TimelinePlan timelinePlan,
-        IDictionary<string, int> plannedNonTargetCollections)
-    {
-        var candidates = timelinePlan.SymbolThresholds.Keys
-            .Where(symbol => !timelinePlan.ObjectiveIds.Contains(symbol))
-            .OrderBy(symbol => StableScore(symbol, spinIndex, position))
-            .ThenBy(symbol => symbol, StringComparer.Ordinal);
-
-        foreach (var symbolId in candidates)
-        {
-            var threshold = timelinePlan.SymbolThresholds[symbolId];
-            var nextCount = plannedNonTargetCollections[symbolId] + 1;
-            if (nextCount < threshold)
-            {
-                plannedNonTargetCollections[symbolId] = nextCount;
-                return BoardCell.FromSymbol(symbolId);
-            }
-        }
-
-        throw new PlanningException("Unable to select a safe non-target symbol without causing an accidental threshold win.");
     }
 
     private static int StableScore(string symbolId, int spinIndex, BoardPosition position)
@@ -226,6 +185,61 @@ public sealed class BackwardBoardPlanner : IBackwardBoardPlanner
         }
 
         return Math.Abs(hash);
+    }
+
+    private sealed class NonTargetSymbolSelector
+    {
+        private readonly IReadOnlyDictionary<string, int> _thresholds;
+        private readonly IReadOnlyList<string> _symbols;
+        private readonly Dictionary<string, int> _plannedCollections;
+        private readonly Dictionary<string, int> _visualUsage;
+
+        public NonTargetSymbolSelector(TimelinePlan timelinePlan)
+        {
+            _thresholds = timelinePlan.SymbolThresholds;
+            _symbols = timelinePlan.SymbolThresholds.Keys
+                .Where(symbol => !timelinePlan.ObjectiveIds.Contains(symbol))
+                .OrderBy(symbol => symbol, StringComparer.Ordinal)
+                .ToArray();
+
+            if (_symbols.Count == 0)
+            {
+                throw new PlanningException("At least one non-target symbol is required to fill non-winning board space.");
+            }
+
+            _plannedCollections = _symbols.ToDictionary(symbol => symbol, _ => 0, StringComparer.Ordinal);
+            _visualUsage = _symbols.ToDictionary(symbol => symbol, _ => 0, StringComparer.Ordinal);
+        }
+
+        public BoardCell CreateDecorativeCell(int spinIndex, BoardPosition position)
+        {
+            var symbolId = ChooseBalancedSymbol(spinIndex, position, requireCollectionCapacity: false);
+            _visualUsage[symbolId]++;
+            return BoardCell.FromSymbol(symbolId);
+        }
+
+        public BoardCell CreateCollectedCell(int spinIndex, BoardPosition position)
+        {
+            var symbolId = ChooseBalancedSymbol(spinIndex, position, requireCollectionCapacity: true);
+            _visualUsage[symbolId]++;
+            _plannedCollections[symbolId]++;
+            return BoardCell.FromSymbol(symbolId);
+        }
+
+        private string ChooseBalancedSymbol(int spinIndex, BoardPosition position, bool requireCollectionCapacity)
+        {
+            foreach (var symbolId in _symbols
+                .Where(symbol => !requireCollectionCapacity || _plannedCollections[symbol] + 1 < _thresholds[symbol])
+                .OrderBy(symbol => _visualUsage[symbol])
+                .ThenBy(symbol => _plannedCollections[symbol])
+                .ThenBy(symbol => StableScore(symbol, spinIndex, position))
+                .ThenBy(symbol => symbol, StringComparer.Ordinal))
+            {
+                return symbolId;
+            }
+
+            throw new PlanningException("Unable to select a safe non-target symbol without causing an accidental threshold win.");
+        }
     }
 
     private static BoardPosition RotatePosition(BoardPosition position, BoardRotation rotation) =>

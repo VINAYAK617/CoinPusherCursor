@@ -18,6 +18,7 @@ var tests = new (string Name, Action Run)[]
     ("planner creates exact verified outcome", PlannerCreatesExactVerifiedOutcome),
     ("planner uses clockwise rotation and paced timeline", PlannerUsesClockwiseRotationAndPacedTimeline),
     ("backward reconstruction produces continuous boards", BackwardReconstructionProducesContinuousBoards),
+    ("non-target board fill is visually varied", NonTargetBoardFillIsVisuallyVaried),
     ("normal planner does not create unearned stacks", NormalPlannerDoesNotCreateUnearnedStacks),
     ("timeline planner requests extra spin capacity", TimelinePlannerRequestsExtraSpinCapacity),
     ("console trace prints board formation and spin states", ConsoleTracePrintsBoardFormationAndSpinStates),
@@ -144,6 +145,37 @@ static void BackwardReconstructionProducesContinuousBoards()
             report.SimulationResult.BoardTimeline[spinIndex + 1].ValueEquals(plan.BoardStates[spinIndex + 1]),
             $"Spin {spinIndex} end snapshot should match replay.");
     }
+}
+
+static void NonTargetBoardFillIsVisuallyVaried()
+{
+    var request = OutcomeRequest.Create(
+        100,
+        new[]
+        {
+            new ObjectiveRequirement("A", 30),
+            new ObjectiveRequirement("B", 30),
+            new ObjectiveRequirement("C", 20),
+            new ObjectiveRequirement("D", 15)
+        },
+        new PaytableConfiguration(new Dictionary<string, PrizeTableEntry>
+        {
+            ["A"] = new(25, 25, 25),
+            ["B"] = new(25, 25, 25),
+            ["C"] = new(25, 25, 25),
+            ["D"] = new(25, 25, 25)
+        }),
+        symbolThresholds: Thresholds(("A", 30), ("B", 30), ("C", 20), ("D", 15)));
+
+    var plan = new OutcomePlanner().Generate(request);
+    var nonTargetSymbolsOnFinalBoard = plan.BoardStates[^1]
+        .Cells()
+        .Where(item => item.Cell.Kind == CellKind.Symbol && !request.Objectives.Any(objective => objective.Id == item.Cell.Symbol!.SymbolId))
+        .Select(item => item.Cell.Symbol!.SymbolId)
+        .Distinct(StringComparer.Ordinal)
+        .Count();
+
+    Assert.True(nonTargetSymbolsOnFinalBoard >= 3, "Final visible board should vary non-target symbols.");
 }
 
 static void NormalPlannerDoesNotCreateUnearnedStacks()
