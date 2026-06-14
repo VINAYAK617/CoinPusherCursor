@@ -16,7 +16,8 @@ var tests = new (string Name, Action Run)[]
     ("console trace prints board formation and spin states", ConsoleTracePrintsBoardFormationAndSpinStates),
     ("wheel uses documented stack increment formula", WheelUsesDocumentedStackIncrementFormula),
     ("wheel caps stacks and harvests potential", WheelCapsStacksAndHarvestsPotential),
-    ("filler symbols do not contribute to objectives", FillerSymbolsDoNotContributeToObjectives),
+    ("non-target symbols count but stay below threshold", NonTargetSymbolsCountButStayBelowThreshold),
+    ("verifier rejects accidental non-target win", VerifierRejectsAccidentalNonTargetWin),
     ("verifier rejects over collection", VerifierRejectsOverCollection),
     ("verifier rejects invalid feature chain", VerifierRejectsInvalidFeatureChain)
 };
@@ -64,7 +65,8 @@ static void PlannerCreatesExactVerifiedOutcome()
             ["A"] = new(10, 20, 30),
             ["B"] = new(20, 40, 60),
             ["C"] = new(410, 420, 430)
-        }));
+        }),
+        symbolThresholds: Thresholds(("A", 30), ("B", 20), ("C", 10)));
 
     var plan = new OutcomePlanner().Generate(request);
     var report = new GamePlanVerifier().Verify(plan);
@@ -85,7 +87,8 @@ static void PlannerUsesClockwiseRotationAndPacedTimeline()
     var request = OutcomeRequest.Create(
         10,
         new[] { new ObjectiveRequirement("A", 30) },
-        new PaytableConfiguration(new Dictionary<string, PrizeTableEntry> { ["A"] = new(10, 10, 10) }));
+        new PaytableConfiguration(new Dictionary<string, PrizeTableEntry> { ["A"] = new(10, 10, 10) }),
+        symbolThresholds: Thresholds(("A", 30)));
 
     var plan = new OutcomePlanner().Generate(request);
     var report = new GamePlanVerifier().Verify(plan);
@@ -112,7 +115,8 @@ static void BackwardReconstructionProducesContinuousBoards()
             ["B"] = new(25, 25, 25),
             ["C"] = new(25, 25, 25),
             ["D"] = new(25, 25, 25)
-        }));
+        }),
+        symbolThresholds: Thresholds(("A", 30), ("B", 30), ("C", 20), ("D", 15)));
 
     var plan = new OutcomePlanner().Generate(request);
     var report = new GamePlanVerifier().Verify(plan);
@@ -149,7 +153,8 @@ static void NormalPlannerDoesNotCreateUnearnedStacks()
             ["B"] = new(25, 25, 25),
             ["C"] = new(25, 25, 25),
             ["D"] = new(25, 25, 25)
-        }));
+        }),
+        symbolThresholds: Thresholds(("A", 30), ("B", 30), ("C", 20), ("D", 15)));
 
     var plan = new OutcomePlanner().Generate(request);
 
@@ -247,7 +252,7 @@ static void WheelCapsStacksAndHarvestsPotential()
     Assert.Equal(7, report.SimulationResult!.CollectionCounts["A"]);
 }
 
-static void FillerSymbolsDoNotContributeToObjectives()
+static void NonTargetSymbolsCountButStayBelowThreshold()
 {
     var board = BoardState.Empty();
     board.Set(new BoardPosition(4, 0), BoardCell.FromSymbol("A", 1));
@@ -267,6 +272,39 @@ static void FillerSymbolsDoNotContributeToObjectives()
 
     Assert.True(report.IsValid, string.Join("; ", report.Issues.Select(issue => issue.Message)));
     Assert.Equal(1, report.SimulationResult!.CollectionCounts["A"]);
+    Assert.Equal(7, report.SimulationResult.CollectionCounts["BELL"]);
+}
+
+static void VerifierRejectsAccidentalNonTargetWin()
+{
+    var board = BoardState.Empty();
+    board.Set(new BoardPosition(4, 0), BoardCell.FromSymbol("A", 1));
+    board.Set(new BoardPosition(4, 1), BoardCell.FromSymbol("Bell", 7));
+
+    var spin = new SpinPlan(
+        0,
+        Array.Empty<FeatureLanding>(),
+        Array.Empty<FeatureAction>(),
+        Array.Empty<FeatureConversion>(),
+        new[] { 1, 1, 1, 1, 1 },
+        BoardRotation.None,
+        Array.Empty<SpawnInstruction>());
+
+    var plan = new GamePlan(
+        10,
+        new[] { new ObjectiveRequirement("A", 1) },
+        new PaytableConfiguration(new Dictionary<string, PrizeTableEntry> { ["A"] = new(10, 10, 10) }),
+        new FeatureConfiguration(),
+        new Dictionary<string, PrizeLevel> { ["A"] = PrizeLevel.Base },
+        Thresholds(("A", 1), ("Bell", 7)),
+        board,
+        new[] { spin },
+        Array.Empty<BoardState>(),
+        new VerificationMetadata("test", 5, "test", DateTimeOffset.UnixEpoch));
+    var report = new GamePlanVerifier().Verify(plan);
+
+    Assert.False(report.IsValid, "Non-target threshold hit should invalidate the plan.");
+    Assert.Contains(report.Issues, issue => issue.Code == "replay_failed" && issue.Message.Contains("Accidental non-target win", StringComparison.Ordinal));
 }
 
 static void VerifierRejectsOverCollection()
@@ -318,6 +356,7 @@ static GamePlan SingleObjectivePlan(int targetCount, int targetWin, BoardState i
         new PaytableConfiguration(new Dictionary<string, PrizeTableEntry> { ["A"] = new(targetWin, targetWin, targetWin) }),
         new FeatureConfiguration(),
         new Dictionary<string, PrizeLevel> { ["A"] = PrizeLevel.Base },
+        Thresholds(("A", targetCount)),
         initialBoard,
         new[] { spin },
         Array.Empty<BoardState>(),
@@ -335,7 +374,35 @@ static OutcomeRequest SimpleTraceRequest() =>
         {
             ["Gold"] = new(10, 20, 20),
             ["Star"] = new(10, 10, 10)
-        }));
+        }),
+        symbolThresholds: Thresholds(("Gold", 8), ("Star", 6)));
+
+static IReadOnlyDictionary<string, int> Thresholds(params (string SymbolId, int Threshold)[] overrides)
+{
+    var thresholds = new Dictionary<string, int>(StringComparer.Ordinal)
+    {
+        ["A"] = 30,
+        ["B"] = 30,
+        ["C"] = 30,
+        ["D"] = 30,
+        ["E"] = 30,
+        ["F"] = 30,
+        ["G"] = 30,
+        ["H"] = 30,
+        ["I"] = 30,
+        ["J"] = 30,
+        ["Gold"] = 30,
+        ["Star"] = 30,
+        ["Bell"] = 30
+    };
+
+    foreach (var (symbolId, threshold) in overrides)
+    {
+        thresholds[symbolId] = threshold;
+    }
+
+    return thresholds;
+}
 
 static void RunTraceDemo()
 {

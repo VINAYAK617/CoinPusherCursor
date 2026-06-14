@@ -14,12 +14,12 @@ public sealed class CoinPusherSimulator : IGameSimulator
         ArgumentNullException.ThrowIfNull(plan);
         ValidatePlanEnvelope(plan);
 
-        var targetCounts = plan.Objectives.ToDictionary(
+        var objectiveTargets = plan.Objectives.ToDictionary(
             objective => objective.Id,
             objective => objective.TargetCount,
             StringComparer.Ordinal);
-        var collectionCounts = targetCounts.Keys.ToDictionary(id => id, _ => 0, StringComparer.Ordinal);
-        var prizeLevels = targetCounts.Keys.ToDictionary(id => id, _ => PrizeLevel.Base, StringComparer.Ordinal);
+        var collectionCounts = plan.SymbolThresholds.Keys.ToDictionary(id => id, _ => 0, StringComparer.Ordinal);
+        var prizeLevels = objectiveTargets.Keys.ToDictionary(id => id, _ => PrizeLevel.Base, StringComparer.Ordinal);
 
         var board = plan.InitialBoard.Clone();
         board.Validate();
@@ -60,19 +60,19 @@ public sealed class CoinPusherSimulator : IGameSimulator
             Trace($"[forward spin {displaySpin}] Planned rotation after collection: {spin.Rotation}");
             TraceBoard($"forward spin {displaySpin} - board at start", board);
 
-            ApplyFeatureLandings(board, spin);
+            ApplyFeatureLandings(board, spin, objectiveTargets);
             TraceBoard($"forward spin {displaySpin} - after feature landing", board);
 
-            ApplyFeatureActions(board, spin, prizeLevels, collectionCounts, targetCounts, spinCollections, ref availableSpins);
+            ApplyFeatureActions(board, spin, prizeLevels, collectionCounts, plan.SymbolThresholds, objectiveTargets, spinCollections, ref availableSpins);
             Trace($"[forward spin {displaySpin}] After feature activation: availableSpins={availableSpins}, prizes={BoardFormatter.FormatPrizeLevels(prizeLevels)}");
             TraceBoard($"forward spin {displaySpin} - after feature activation", board);
 
             ApplyFeatureConversions(board, spin);
             TraceBoard($"forward spin {displaySpin} - after feature conversion", board);
 
-            Trace($"[forward spin {displaySpin}] Planned harvest from bottom rows before push: {FormatProjectedHarvest(board, spin, targetCounts)}");
+            Trace($"[forward spin {displaySpin}] Planned harvest from bottom rows before push: {FormatProjectedHarvest(board, spin, plan.SymbolThresholds)}");
             Trace($"[forward spin {displaySpin}] Collection step: each pusher removes that many cells from the bottom of its column.");
-            ApplyPushes(board, spin, collectionCounts, targetCounts, spinCollections);
+            ApplyPushes(board, spin, collectionCounts, plan.SymbolThresholds, objectiveTargets, spinCollections);
             Trace($"[forward spin {displaySpin}] Actually collected: {FormatCollections(spinCollections)}");
             Trace($"[forward spin {displaySpin}] Cumulative counts now: {BoardFormatter.FormatCounts(collectionCounts)}");
             TraceBoard($"forward spin {displaySpin} - after collection / before rotation", board);
@@ -130,6 +130,15 @@ public sealed class CoinPusherSimulator : IGameSimulator
             }
 
             plan.Paytable.GetEntry(objective.Id);
+            if (!plan.SymbolThresholds.TryGetValue(objective.Id, out var threshold))
+            {
+                throw new SimulationException($"Objective '{objective.Id}' is missing from symbol thresholds.");
+            }
+
+            if (threshold != objective.TargetCount)
+            {
+                throw new SimulationException($"Objective '{objective.Id}' target must equal its symbol threshold.");
+            }
 
             if (!plan.PlannedPrizeLevels.ContainsKey(objective.Id))
             {
@@ -138,13 +147,16 @@ public sealed class CoinPusherSimulator : IGameSimulator
         }
     }
 
-    private static void ApplyFeatureLandings(BoardState board, SpinPlan spin)
+    private static void ApplyFeatureLandings(
+        BoardState board,
+        SpinPlan spin,
+        IReadOnlyDictionary<string, int> objectiveTargets)
     {
         foreach (var landing in spin.FeatureLandings)
         {
             var currentCell = board.Get(landing.Position);
             var canLand = currentCell.Kind == CellKind.Empty
-                || (currentCell.Kind == CellKind.Symbol && !currentCell.Symbol!.ContributesToObjective);
+                || (currentCell.Kind == CellKind.Symbol && !objectiveTargets.ContainsKey(currentCell.Symbol!.SymbolId));
             if (!canLand)
             {
                 throw new SimulationException($"Feature landing at {landing.Position} can only replace empty or filler cells.");
@@ -166,7 +178,8 @@ public sealed class CoinPusherSimulator : IGameSimulator
         SpinPlan spin,
         IDictionary<string, PrizeLevel> prizeLevels,
         IDictionary<string, int> collectionCounts,
-        IReadOnlyDictionary<string, int> targetCounts,
+        IReadOnlyDictionary<string, int> symbolThresholds,
+        IReadOnlyDictionary<string, int> objectiveTargets,
         ICollection<CollectionEvent> spinCollections,
         ref int availableSpins)
     {
@@ -190,7 +203,7 @@ public sealed class CoinPusherSimulator : IGameSimulator
                     break;
                 case FlushAction flush:
                     EnsureFeature(board, flush.SourcePosition, FeatureKind.Flush);
-                    ApplyFlush(board, spin.SpinIndex, flush, collectionCounts, targetCounts, spinCollections);
+                    ApplyFlush(board, spin.SpinIndex, flush, collectionCounts, symbolThresholds, objectiveTargets, spinCollections);
                     break;
                 case ExtraSpinAction extraSpin:
                     EnsureFeature(board, extraSpin.SourcePosition, FeatureKind.ExtraSpin);
@@ -265,7 +278,8 @@ public sealed class CoinPusherSimulator : IGameSimulator
         int spinIndex,
         FlushAction action,
         IDictionary<string, int> collectionCounts,
-        IReadOnlyDictionary<string, int> targetCounts,
+        IReadOnlyDictionary<string, int> symbolThresholds,
+        IReadOnlyDictionary<string, int> objectiveTargets,
         ICollection<CollectionEvent> spinCollections)
     {
         if (action.Column < 0 || action.Column >= EngineConstants.BoardColumns)
@@ -281,7 +295,7 @@ public sealed class CoinPusherSimulator : IGameSimulator
                 continue;
             }
 
-            CollectSymbol(spinIndex, cell.Symbol!, CollectionSource.Flush, position, collectionCounts, targetCounts, spinCollections);
+            CollectSymbol(spinIndex, cell.Symbol!, CollectionSource.Flush, position, collectionCounts, symbolThresholds, objectiveTargets, spinCollections);
             collectedAmount += cell.Symbol!.StackSize;
         }
 
@@ -327,7 +341,8 @@ public sealed class CoinPusherSimulator : IGameSimulator
         BoardState board,
         SpinPlan spin,
         IDictionary<string, int> collectionCounts,
-        IReadOnlyDictionary<string, int> targetCounts,
+        IReadOnlyDictionary<string, int> symbolThresholds,
+        IReadOnlyDictionary<string, int> objectiveTargets,
         ICollection<CollectionEvent> spinCollections)
     {
         for (var column = 0; column < EngineConstants.BoardColumns; column++)
@@ -345,7 +360,7 @@ public sealed class CoinPusherSimulator : IGameSimulator
                     throw new SimulationException($"Unconverted feature at {position} cannot be pushed into the collection edge.");
                 }
 
-                CollectSymbol(spin.SpinIndex, cell.Symbol!, CollectionSource.Push, position, collectionCounts, targetCounts, spinCollections);
+                CollectSymbol(spin.SpinIndex, cell.Symbol!, CollectionSource.Push, position, collectionCounts, symbolThresholds, objectiveTargets, spinCollections);
             }
         }
 
@@ -381,23 +396,26 @@ public sealed class CoinPusherSimulator : IGameSimulator
         CollectionSource source,
         BoardPosition position,
         IDictionary<string, int> collectionCounts,
-        IReadOnlyDictionary<string, int> targetCounts,
+        IReadOnlyDictionary<string, int> symbolThresholds,
+        IReadOnlyDictionary<string, int> objectiveTargets,
         ICollection<CollectionEvent> spinCollections)
     {
-        if (!symbol.ContributesToObjective)
+        if (!symbolThresholds.TryGetValue(symbol.SymbolId, out var threshold))
         {
-            return;
-        }
-
-        if (!targetCounts.TryGetValue(symbol.SymbolId, out var target))
-        {
-            throw new SimulationException($"Collected unknown objective symbol '{symbol.SymbolId}' at {position}.");
+            throw new SimulationException($"Collected unknown symbol '{symbol.SymbolId}' at {position}.");
         }
 
         var nextCount = collectionCounts[symbol.SymbolId] + symbol.StackSize;
-        if (nextCount > target)
+        if (objectiveTargets.TryGetValue(symbol.SymbolId, out var target))
         {
-            throw new SimulationException($"Over-collection for objective '{symbol.SymbolId}'. Target {target}, attempted {nextCount}.");
+            if (nextCount > target)
+            {
+                throw new SimulationException($"Over-collection for objective '{symbol.SymbolId}'. Target {target}, attempted {nextCount}.");
+            }
+        }
+        else if (nextCount >= threshold)
+        {
+            throw new SimulationException($"Accidental non-target win for symbol '{symbol.SymbolId}'. Threshold {threshold}, attempted {nextCount}.");
         }
 
         collectionCounts[symbol.SymbolId] = nextCount;
@@ -437,7 +455,7 @@ public sealed class CoinPusherSimulator : IGameSimulator
     private static string FormatProjectedHarvest(
         BoardState board,
         SpinPlan spin,
-        IReadOnlyDictionary<string, int> targetCounts)
+        IReadOnlyDictionary<string, int> symbolThresholds)
     {
         var projected = new Dictionary<string, int>(StringComparer.Ordinal);
         for (var column = 0; column < EngineConstants.BoardColumns; column++)
@@ -446,7 +464,7 @@ public sealed class CoinPusherSimulator : IGameSimulator
             for (var row = EngineConstants.BoardRows - pushValue; row < EngineConstants.BoardRows; row++)
             {
                 var cell = board.Get(new BoardPosition(row, column));
-                if (cell.Kind != CellKind.Symbol || !cell.Symbol!.ContributesToObjective || !targetCounts.ContainsKey(cell.Symbol.SymbolId))
+                if (cell.Kind != CellKind.Symbol || !symbolThresholds.ContainsKey(cell.Symbol!.SymbolId))
                 {
                     continue;
                 }

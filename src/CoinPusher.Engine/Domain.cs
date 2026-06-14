@@ -193,20 +193,54 @@ public sealed record OutcomeRequest(
     IReadOnlyList<ObjectiveRequirement> Objectives,
     PaytableConfiguration Paytable,
     FeatureConfiguration FeatureConfiguration,
-    StyleProfile StyleProfile)
+    StyleProfile StyleProfile,
+    IReadOnlyDictionary<string, int> SymbolThresholds)
 {
     public static OutcomeRequest Create(
         int targetWin,
         IReadOnlyList<ObjectiveRequirement> objectives,
         PaytableConfiguration paytable,
         FeatureConfiguration? featureConfiguration = null,
-        StyleProfile? styleProfile = null) =>
+        StyleProfile? styleProfile = null,
+        IReadOnlyDictionary<string, int>? symbolThresholds = null) =>
         new(
             targetWin,
             objectives,
             paytable,
             featureConfiguration ?? new FeatureConfiguration(),
-            styleProfile ?? new StyleProfile());
+            styleProfile ?? new StyleProfile(),
+            NormalizeThresholds(objectives, symbolThresholds));
+
+    private static IReadOnlyDictionary<string, int> NormalizeThresholds(
+        IReadOnlyList<ObjectiveRequirement> objectives,
+        IReadOnlyDictionary<string, int>? symbolThresholds)
+    {
+        var normalized = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var symbol in new[] { "A", "B", "C", "D", "E", "F", "G", "H", "I", "J" })
+        {
+            normalized[symbol] = 30;
+        }
+
+        if (symbolThresholds is not null)
+        {
+            foreach (var (symbolId, threshold) in symbolThresholds)
+            {
+                if (threshold <= 0)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(symbolThresholds), threshold, "Symbol thresholds must be positive.");
+                }
+
+                normalized[ObjectiveRequirement.NormalizeObjectiveId(symbolId)] = threshold;
+            }
+        }
+
+        foreach (var objective in objectives)
+        {
+            normalized[objective.Id] = objective.TargetCount;
+        }
+
+        return normalized;
+    }
 }
 
 public sealed record SymbolToken
@@ -277,7 +311,7 @@ public sealed record BoardCell
         new(CellKind.Symbol, symbol, null);
 
     public static BoardCell FromFillerSymbol(string symbolId, int stackSize = 1) =>
-        new(CellKind.Symbol, new SymbolToken(symbolId, stackSize, contributesToObjective: false), null);
+        new(CellKind.Symbol, new SymbolToken(symbolId, stackSize), null);
 
     public static BoardCell FromFeature(FeatureKind kind, int chainDepth = 0) =>
         new(CellKind.Feature, null, new FeatureToken(kind, chainDepth));
@@ -289,9 +323,7 @@ public sealed record BoardCell
         Kind switch
         {
             CellKind.Empty => ".",
-            CellKind.Symbol => Symbol!.ContributesToObjective
-                ? $"{Symbol.SymbolId}x{Symbol.StackSize}"
-                : $"{Symbol.SymbolId}x{Symbol.StackSize}*",
+            CellKind.Symbol => $"{Symbol!.SymbolId}x{Symbol.StackSize}",
             CellKind.Feature => $"{Feature!.Kind}@{Feature.ChainDepth}",
             _ => "?"
         };
@@ -376,6 +408,7 @@ public sealed record GamePlan
         PaytableConfiguration paytable,
         FeatureConfiguration featureConfiguration,
         IReadOnlyDictionary<string, PrizeLevel> plannedPrizeLevels,
+        IReadOnlyDictionary<string, int> symbolThresholds,
         BoardState initialBoard,
         IReadOnlyList<SpinPlan> spins,
         IReadOnlyList<BoardState> boardStates,
@@ -386,6 +419,10 @@ public sealed record GamePlan
         Paytable = paytable;
         FeatureConfiguration = featureConfiguration;
         PlannedPrizeLevels = plannedPrizeLevels.ToDictionary(
+            entry => ObjectiveRequirement.NormalizeObjectiveId(entry.Key),
+            entry => entry.Value,
+            StringComparer.Ordinal);
+        SymbolThresholds = symbolThresholds.ToDictionary(
             entry => ObjectiveRequirement.NormalizeObjectiveId(entry.Key),
             entry => entry.Value,
             StringComparer.Ordinal);
@@ -404,6 +441,8 @@ public sealed record GamePlan
     public FeatureConfiguration FeatureConfiguration { get; }
 
     public IReadOnlyDictionary<string, PrizeLevel> PlannedPrizeLevels { get; }
+
+    public IReadOnlyDictionary<string, int> SymbolThresholds { get; }
 
     public BoardState InitialBoard { get; }
 

@@ -93,34 +93,68 @@ R4      A     B     C     D     E
 
 ## 4. Symbols
 
-There are two categories of symbols.
+There is no permanent filler-symbol set.
 
-### 4.1 Objective symbols
+The engine may use symbols such as:
 
-These count toward objectives.
+```text
+A, B, C, D, E, F, G, H, I, J
+```
+
+Every symbol has its own collection threshold.
+
+Example thresholds:
+
+```text
+A = 30
+B = 30
+C = 20
+D = 15
+E = 25
+F = 20
+G = 12
+H = 12
+I = 12
+J = 12
+```
+
+The math input decides which symbols are intended wins for the current game.
+
+Example current game target:
+
+```text
+A = 30
+B = 30
+C = 20
+D = 15
+```
+
+Then:
+
+```text
+A/B/C/D are target symbols and must hit their thresholds exactly.
+E/F/G/H/I/J are non-target symbols for this game.
+```
+
+Non-target symbols are still collected and counted.
+
+They are safe only while they stay below their thresholds.
 
 Example:
 
 ```text
-A, B, C, D
+G threshold = 12
+G collected = 11   safe
+G collected = 12   accidental win, invalid
 ```
 
-If `A` is collected, the objective count for `A` increases.
-
-### 4.2 Filler symbols
-
-These make the board look natural but do not count toward objectives.
-
-Example:
+So "filler" only means:
 
 ```text
-E, F, G, H, I, J
+not intended to win in this generated session
 ```
 
-If `G` is collected, no objective changes.
-
-This is important because the board should look full and organic without
-accidentally changing the mathematical result.
+It does not mean ignored.
 
 ---
 
@@ -454,8 +488,8 @@ Bottom row can be restored as:
 C0 = C
 C1 = C
 C2 = D
-C3 = filler
-C4 = filler
+C3 = non-target symbol below threshold
+C4 = non-target symbol below threshold
 ```
 
 Now when the game runs forward, it will collect exactly:
@@ -617,7 +651,7 @@ Example column:
 ```text
 R0 A x4
 R1 C
-R2 filler
+R2 non-target symbol
 R3 D
 R4 C
 ```
@@ -630,7 +664,8 @@ C += 2
 D += 1
 ```
 
-Filler symbols do not count.
+Non-target symbols still count. The flush is valid only if those non-target
+counts remain below their thresholds.
 
 Dead flush is invalid.
 
@@ -818,7 +853,7 @@ Builds actual board states backward.
 
 This module:
 
-- starts from a final filler board
+- starts from a final board containing non-target symbols below threshold
 - removes spawns
 - rotates anti-clockwise
 - restores collected symbols

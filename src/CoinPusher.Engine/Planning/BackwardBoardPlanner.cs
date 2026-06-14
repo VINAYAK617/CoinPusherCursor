@@ -3,12 +3,10 @@ namespace CoinPusher.Engine;
 public sealed class BackwardBoardPlanner : IBackwardBoardPlanner
 {
     private readonly IEngineTraceSink _trace;
-    private readonly IFillerSymbolProvider _fillerSymbols;
 
-    public BackwardBoardPlanner(IEngineTraceSink? trace = null, IFillerSymbolProvider? fillerSymbols = null)
+    public BackwardBoardPlanner(IEngineTraceSink? trace = null)
     {
         _trace = trace ?? NullEngineTraceSink.Instance;
-        _fillerSymbols = fillerSymbols ?? new DeterministicFillerSymbolProvider();
     }
 
     public IReadOnlyList<PlannedCollectionBatch> Build(TimelinePlan timelinePlan)
@@ -20,9 +18,10 @@ public sealed class BackwardBoardPlanner : IBackwardBoardPlanner
         Trace($"[board-planner] Reconstructing {timelinePlan.SpinCount} spin start boards from the end of the game back to spin 1.");
 
         var reversedBatches = new Stack<PlannedCollectionBatch>();
-        var nextStartBoard = BuildFinalNonWinBoard(timelinePlan.SpinCount);
+        var plannedNonTargetCollections = timelinePlan.SymbolThresholds.Keys.ToDictionary(symbol => symbol, _ => 0, StringComparer.Ordinal);
+        var nextStartBoard = BuildFinalNonWinBoard(timelinePlan);
         TraceBoard(
-            "seed board after the last spin finishes (safe filler only)",
+            "seed board after the last spin finishes (non-target symbols below threshold)",
             nextStartBoard);
 
         for (var spinIndex = timelinePlan.Spins.Count - 1; spinIndex >= 0; spinIndex--)
@@ -56,7 +55,13 @@ public sealed class BackwardBoardPlanner : IBackwardBoardPlanner
                 $"reverse spin {displaySpin} step 2 - after anti-clockwise undo rotation",
                 afterCollection);
 
-            var startBoard = RestoreCollections(spin.SpinIndex, afterCollection, pushValues, columnContributions);
+            var startBoard = RestoreCollections(
+                spin.SpinIndex,
+                afterCollection,
+                pushValues,
+                columnContributions,
+                timelinePlan,
+                plannedNonTargetCollections);
             Trace($"[reverse spin {displaySpin}] Step 3: restore the bottom collected rows so forward play collects exactly: {FormatContributions(spin.Contributions)}");
             Trace($"[reverse spin {displaySpin}] Result: this is the START board for forward spin {displaySpin}.");
             TraceBoard(
@@ -71,7 +76,7 @@ public sealed class BackwardBoardPlanner : IBackwardBoardPlanner
         return reversedBatches.ToArray();
     }
 
-    private BoardState BuildFinalNonWinBoard(int spinCount)
+    private BoardState BuildFinalNonWinBoard(TimelinePlan timelinePlan)
     {
         var board = BoardState.Empty();
         for (var row = 0; row < EngineConstants.BoardRows; row++)
@@ -79,11 +84,27 @@ public sealed class BackwardBoardPlanner : IBackwardBoardPlanner
             for (var column = 0; column < EngineConstants.BoardColumns; column++)
             {
                 var position = new BoardPosition(row, column);
-                board.Set(position, _fillerSymbols.CreateFillerCell(spinCount, position));
+                board.Set(position, CreateSafeNonCollectedCell(timelinePlan.SpinCount, position, timelinePlan));
             }
         }
 
         return board;
+    }
+
+    private static BoardCell CreateSafeNonCollectedCell(int spinIndex, BoardPosition position, TimelinePlan timelinePlan)
+    {
+        var symbolId = timelinePlan.SymbolThresholds.Keys
+            .Where(symbol => !timelinePlan.ObjectiveIds.Contains(symbol))
+            .OrderBy(symbol => StableScore(symbol, spinIndex, position))
+            .ThenBy(symbol => symbol, StringComparer.Ordinal)
+            .FirstOrDefault();
+
+        if (symbolId is null)
+        {
+            return BoardCell.Empty;
+        }
+
+        return BoardCell.FromSymbol(symbolId);
     }
 
     private static IReadOnlyList<ContributionUnit>[] AssignContributionsToColumns(TimelineSpinContributions spin)
@@ -136,7 +157,9 @@ public sealed class BackwardBoardPlanner : IBackwardBoardPlanner
         int spinIndex,
         BoardState afterCollection,
         IReadOnlyList<int> pushValues,
-        IReadOnlyList<ContributionUnit>[] columnContributions)
+        IReadOnlyList<ContributionUnit>[] columnContributions,
+        TimelinePlan timelinePlan,
+        IDictionary<string, int> plannedNonTargetCollections)
     {
         var startBoard = BoardState.Empty();
 
@@ -160,13 +183,49 @@ public sealed class BackwardBoardPlanner : IBackwardBoardPlanner
                 }
                 else
                 {
-                    startBoard.Set(position, _fillerSymbols.CreateFillerCell(spinIndex, position));
+                    startBoard.Set(position, CreateSafeNonTargetCell(spinIndex, position, timelinePlan, plannedNonTargetCollections));
                 }
             }
         }
 
         startBoard.Validate();
         return startBoard;
+    }
+
+    private BoardCell CreateSafeNonTargetCell(
+        int spinIndex,
+        BoardPosition position,
+        TimelinePlan timelinePlan,
+        IDictionary<string, int> plannedNonTargetCollections)
+    {
+        var candidates = timelinePlan.SymbolThresholds.Keys
+            .Where(symbol => !timelinePlan.ObjectiveIds.Contains(symbol))
+            .OrderBy(symbol => StableScore(symbol, spinIndex, position))
+            .ThenBy(symbol => symbol, StringComparer.Ordinal);
+
+        foreach (var symbolId in candidates)
+        {
+            var threshold = timelinePlan.SymbolThresholds[symbolId];
+            var nextCount = plannedNonTargetCollections[symbolId] + 1;
+            if (nextCount < threshold)
+            {
+                plannedNonTargetCollections[symbolId] = nextCount;
+                return BoardCell.FromSymbol(symbolId);
+            }
+        }
+
+        throw new PlanningException("Unable to select a safe non-target symbol without causing an accidental threshold win.");
+    }
+
+    private static int StableScore(string symbolId, int spinIndex, BoardPosition position)
+    {
+        var hash = spinIndex * 31 + position.Row * 11 + position.Column * 7;
+        foreach (var character in symbolId)
+        {
+            hash = (hash * 17) + character;
+        }
+
+        return Math.Abs(hash);
     }
 
     private static BoardPosition RotatePosition(BoardPosition position, BoardRotation rotation) =>
@@ -183,7 +242,7 @@ public sealed class BackwardBoardPlanner : IBackwardBoardPlanner
     {
         if (contributions.Count == 0)
         {
-            return "none (only filler symbols may be collected)";
+            return "none (only non-target symbols may be collected, still below threshold)";
         }
 
         return string.Join(

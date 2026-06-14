@@ -20,7 +20,7 @@ reconstruction, examples, and invariants, see:
   6. spawn resolution
   7. end of spin
 - Exact objective collection with no over-collection
-- Filler symbols that can appear on the board without contributing to objectives
+- Contextual non-target symbols that are still collected and must remain below their thresholds
 - Prize upgrade state and exact payout verification
 - Wheel stack upgrades using `current + 1 + wheelValue`, with max stack cap of 7
 - Flush collection with dead-flush detection
@@ -28,7 +28,7 @@ reconstruction, examples, and invariants, see:
 - Feature-chain validation
 - Deterministic board snapshots for replay verification
 - Backward reconstruction planner:
-  - seeds a final non-winning filler board
+  - seeds a final non-winning board with non-target symbols below threshold
   - removes planned spawns
   - rotates anti-clockwise to undo forward rotation
   - restores exact collection symbols into bottom rows

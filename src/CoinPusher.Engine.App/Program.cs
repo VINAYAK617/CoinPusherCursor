@@ -58,4 +58,17 @@ static OutcomeRequest CreateDemoRequest() =>
             ["B"] = new(25, 25, 25),
             ["C"] = new(25, 25, 25),
             ["D"] = new(25, 25, 25)
-        }));
+        }),
+        symbolThresholds: new Dictionary<string, int>
+        {
+            ["A"] = 30,
+            ["B"] = 30,
+            ["C"] = 20,
+            ["D"] = 15,
+            ["E"] = 25,
+            ["F"] = 20,
+            ["G"] = 18,
+            ["H"] = 18,
+            ["I"] = 18,
+            ["J"] = 18
+        });

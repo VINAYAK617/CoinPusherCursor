@@ -16,7 +16,9 @@ public sealed record ObjectiveContributionAllocation(string ObjectiveId, int Nor
 
 public sealed record ContributionPlan(
     IReadOnlyList<ObjectiveContributionAllocation> Allocations,
-    IReadOnlyList<ContributionUnit> Units);
+    IReadOnlyList<ContributionUnit> Units,
+    IReadOnlyDictionary<string, int> SymbolThresholds,
+    IReadOnlySet<string> ObjectiveIds);
 
 public sealed record FeasibilityReport(
     bool IsFeasible,
@@ -30,7 +32,9 @@ public sealed record TimelineSpinContributions(int SpinIndex, IReadOnlyList<Cont
 public sealed record TimelinePlan(
     int SpinCount,
     int ExtraSpinsRequired,
-    IReadOnlyList<TimelineSpinContributions> Spins);
+    IReadOnlyList<TimelineSpinContributions> Spins,
+    IReadOnlyDictionary<string, int> SymbolThresholds,
+    IReadOnlySet<string> ObjectiveIds);
 
 public sealed record PlannedCollectionBatch(
     BoardState Board,

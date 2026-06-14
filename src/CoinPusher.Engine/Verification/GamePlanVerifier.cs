@@ -18,6 +18,7 @@ public sealed class GamePlanVerifier : IGamePlanVerifier
         {
             result = _simulator.Replay(plan);
             VerifyObjectiveCompletion(plan, result, issues);
+            VerifyNonTargetSymbolsRemainSafe(plan, result, issues);
             VerifyPrizeLevels(plan, result, issues);
             VerifyPayout(plan, result, issues);
         }
@@ -31,6 +32,27 @@ public sealed class GamePlanVerifier : IGamePlanVerifier
         }
 
         return new VerificationReport(issues.Count == 0, issues, result);
+    }
+
+    private static void VerifyNonTargetSymbolsRemainSafe(GamePlan plan, SimulationResult result, ICollection<VerificationIssue> issues)
+    {
+        var objectiveIds = plan.Objectives.Select(objective => objective.Id).ToHashSet(StringComparer.Ordinal);
+        foreach (var (symbolId, threshold) in plan.SymbolThresholds)
+        {
+            if (objectiveIds.Contains(symbolId))
+            {
+                continue;
+            }
+
+            var actual = result.CollectionCounts.TryGetValue(symbolId, out var count) ? count : 0;
+            if (actual >= threshold)
+            {
+                issues.Add(new VerificationIssue(
+                    VerificationSeverity.Error,
+                    "accidental_symbol_win",
+                    $"Non-target symbol '{symbolId}' collected {actual}, threshold {threshold}."));
+            }
+        }
     }
 
     private static void VerifyObjectiveCompletion(GamePlan plan, SimulationResult result, ICollection<VerificationIssue> issues)

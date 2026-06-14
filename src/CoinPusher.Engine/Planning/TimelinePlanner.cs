@@ -28,6 +28,8 @@ public sealed class TimelinePlanner : ITimelinePlanner
         return new TimelinePlan(
             spinCount,
             Math.Max(0, spinCount - featureConfiguration.InitialSpinCount),
-            spins.Select((spin, index) => new TimelineSpinContributions(index, spin)).ToArray());
+            spins.Select((spin, index) => new TimelineSpinContributions(index, spin)).ToArray(),
+            contributionPlan.SymbolThresholds,
+            contributionPlan.ObjectiveIds);
     }
 }

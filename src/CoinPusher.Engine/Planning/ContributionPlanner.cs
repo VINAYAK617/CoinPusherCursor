@@ -19,6 +19,10 @@ public sealed class ContributionPlanner : IContributionPlanner
             }
         }
 
-        return new ContributionPlan(allocations, units);
+        return new ContributionPlan(
+            allocations,
+            units,
+            new Dictionary<string, int>(StringComparer.Ordinal),
+            new HashSet<string>(StringComparer.Ordinal));
     }
 }

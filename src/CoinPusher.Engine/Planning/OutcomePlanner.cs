@@ -47,7 +47,12 @@ public sealed class OutcomePlanner : IOutcomePlanner
         var plannedPrizeLevels = _prizePlanner.Solve(request);
         Trace($"[planner] Prize levels: {BoardFormatter.FormatPrizeLevels(plannedPrizeLevels)}");
 
-        var contributionPlan = _contributionPlanner.Plan(objectives);
+        var rawContributionPlan = _contributionPlanner.Plan(objectives);
+        var contributionPlan = rawContributionPlan with
+        {
+            SymbolThresholds = request.SymbolThresholds,
+            ObjectiveIds = objectives.Select(objective => objective.Id).ToHashSet(StringComparer.Ordinal)
+        };
         Trace($"[planner] Contribution units: {contributionPlan.Units.Count}");
 
         var feasibility = _feasibilitySolver.Evaluate(contributionPlan, request.FeatureConfiguration);
@@ -113,6 +118,15 @@ public sealed class OutcomePlanner : IOutcomePlanner
             }
 
             request.Paytable.GetEntry(objective.Id);
+            if (!request.SymbolThresholds.TryGetValue(objective.Id, out var threshold))
+            {
+                throw new PlanningException($"Objective '{objective.Id}' is missing a symbol threshold.");
+            }
+
+            if (threshold != objective.TargetCount)
+            {
+                throw new PlanningException($"Objective '{objective.Id}' target {objective.TargetCount} must equal its symbol threshold {threshold}.");
+            }
         }
     }
 
@@ -138,20 +152,24 @@ public sealed class OutcomePlanner : IOutcomePlanner
             }
         }
 
+        var objectiveIds = request.Objectives.Select(objective => objective.Id).ToHashSet(StringComparer.Ordinal);
         foreach (var pendingFeature in pendingFeatures)
         {
-            if (!TryScheduleFeature(pendingFeature, spinBuilders))
+            if (!TryScheduleFeature(pendingFeature, spinBuilders, objectiveIds))
             {
                 throw new PlanningException("Unable to schedule all feature activations without colliding with planned board values.");
             }
         }
     }
 
-    private static bool TryScheduleFeature(PendingFeature pendingFeature, IReadOnlyList<SpinPlanBuilder> spinBuilders)
+    private static bool TryScheduleFeature(
+        PendingFeature pendingFeature,
+        IReadOnlyList<SpinPlanBuilder> spinBuilders,
+        IReadOnlySet<string> objectiveIds)
     {
         foreach (var builder in spinBuilders)
         {
-            foreach (var position in FindFeatureLandingSlots(builder.StartBoard))
+            foreach (var position in FindFeatureLandingSlots(builder.StartBoard, objectiveIds))
             {
                 if (builder.ReservedFeaturePositions.Contains(position))
                 {
@@ -170,7 +188,7 @@ public sealed class OutcomePlanner : IOutcomePlanner
         return false;
     }
 
-    private static IEnumerable<BoardPosition> FindFeatureLandingSlots(BoardState board)
+    private static IEnumerable<BoardPosition> FindFeatureLandingSlots(BoardState board, IReadOnlySet<string> objectiveIds)
     {
         for (var row = 0; row < EngineConstants.BoardRows; row++)
         {
@@ -178,7 +196,7 @@ public sealed class OutcomePlanner : IOutcomePlanner
             {
                 var position = new BoardPosition(row, column);
                 var cell = board.Get(position);
-                if (cell.Kind == CellKind.Empty || (cell.Kind == CellKind.Symbol && !cell.Symbol!.ContributesToObjective))
+                if (cell.Kind == CellKind.Empty || (cell.Kind == CellKind.Symbol && !objectiveIds.Contains(cell.Symbol!.SymbolId)))
                 {
                     yield return position;
                 }
@@ -206,6 +224,7 @@ public sealed class OutcomePlanner : IOutcomePlanner
             request.Paytable,
             request.FeatureConfiguration,
             plannedPrizeLevels,
+            request.SymbolThresholds,
             initialBoard,
             spins,
             boardStates,
