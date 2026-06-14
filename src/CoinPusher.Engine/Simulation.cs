@@ -214,16 +214,17 @@ public sealed class CoinPusherSimulator
         var targetObjectiveId = ObjectiveRequirement.NormalizeObjectiveId(action.TargetObjectiveId);
         var matchedSymbols = 0;
         var increasedSymbols = 0;
+        var stackIncrement = 1 + action.WheelValue;
 
         foreach (var (position, cell) in board.Cells().ToArray())
         {
-            if (cell.Kind != CellKind.Symbol || cell.Symbol!.ObjectiveId != targetObjectiveId)
+            if (cell.Kind != CellKind.Symbol || cell.Symbol!.SymbolId != targetObjectiveId)
             {
                 continue;
             }
 
             matchedSymbols++;
-            var upgraded = cell.Symbol.AddStacks(action.WheelValue);
+            var upgraded = cell.Symbol.AddStacks(stackIncrement);
             if (upgraded.StackSize > cell.Symbol.StackSize)
             {
                 increasedSymbols++;
@@ -362,19 +363,24 @@ public sealed class CoinPusherSimulator
         IReadOnlyDictionary<string, int> targetCounts,
         ICollection<CollectionEvent> spinCollections)
     {
-        if (!targetCounts.TryGetValue(symbol.ObjectiveId, out var target))
+        if (!symbol.ContributesToObjective)
         {
-            throw new SimulationException($"Collected unknown objective symbol '{symbol.ObjectiveId}' at {position}.");
+            return;
         }
 
-        var nextCount = collectionCounts[symbol.ObjectiveId] + symbol.StackSize;
+        if (!targetCounts.TryGetValue(symbol.SymbolId, out var target))
+        {
+            throw new SimulationException($"Collected unknown objective symbol '{symbol.SymbolId}' at {position}.");
+        }
+
+        var nextCount = collectionCounts[symbol.SymbolId] + symbol.StackSize;
         if (nextCount > target)
         {
-            throw new SimulationException($"Over-collection for objective '{symbol.ObjectiveId}'. Target {target}, attempted {nextCount}.");
+            throw new SimulationException($"Over-collection for objective '{symbol.SymbolId}'. Target {target}, attempted {nextCount}.");
         }
 
-        collectionCounts[symbol.ObjectiveId] = nextCount;
-        spinCollections.Add(new CollectionEvent(spinIndex, symbol.ObjectiveId, symbol.StackSize, source, position));
+        collectionCounts[symbol.SymbolId] = nextCount;
+        spinCollections.Add(new CollectionEvent(spinIndex, symbol.SymbolId, symbol.StackSize, source, position));
     }
 
     private static void EnsureFeature(BoardState board, BoardPosition position, FeatureKind expectedKind)

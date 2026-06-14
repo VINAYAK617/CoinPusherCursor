@@ -1,81 +1,59 @@
 namespace CoinPusher.Engine;
 
-public sealed class OutcomePlanner
+public enum ContributionSource
 {
-    private const string EngineVersion = "1.0.0";
-    private readonly CoinPusherSimulator _simulator;
-    private readonly GamePlanVerifier _verifier;
+    Normal,
+    Wheel,
+    Flush
+}
 
-    public OutcomePlanner(CoinPusherSimulator? simulator = null, GamePlanVerifier? verifier = null)
-    {
-        _simulator = simulator ?? new CoinPusherSimulator();
-        _verifier = verifier ?? new GamePlanVerifier(_simulator);
-    }
+public sealed record ContributionUnit(string ObjectiveId, int Amount, ContributionSource Source);
 
-    public GamePlan Generate(OutcomeRequest request)
+public sealed record ObjectiveContributionAllocation(string ObjectiveId, int Normal, int Wheel, int Flush)
+{
+    public int Total => Normal + Wheel + Flush;
+}
+
+public sealed record ContributionPlan(
+    IReadOnlyList<ObjectiveContributionAllocation> Allocations,
+    IReadOnlyList<ContributionUnit> Units);
+
+public sealed record FeasibilityReport(
+    bool IsFeasible,
+    int RequiredContributionCells,
+    int RequiredSpins,
+    int AvailableInitialSpins,
+    string? Reason);
+
+public sealed record TimelineSpinContributions(int SpinIndex, IReadOnlyList<ContributionUnit> Contributions);
+
+public sealed record TimelinePlan(
+    int SpinCount,
+    int ExtraSpinsRequired,
+    IReadOnlyList<TimelineSpinContributions> Spins);
+
+public sealed record PlannedCollectionBatch(BoardState Board, IReadOnlyList<int> PushValues);
+
+public sealed class OutcomeSolver
+{
+    public IReadOnlyList<ObjectiveRequirement> Solve(OutcomeRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
-        ValidateRequest(request);
-
-        var plannedPrizeLevels = SolvePrizeLevels(request);
-        var collectionBatches = BuildCollectionBatches(request.Objectives);
-        var requiredCollectionSpins = Math.Max(1, collectionBatches.Count);
-        var spinCount = Math.Max(request.FeatureConfiguration.InitialSpinCount, requiredCollectionSpins);
-        var extraSpinsRequired = Math.Max(0, requiredCollectionSpins - request.FeatureConfiguration.InitialSpinCount);
-
-        var spinBuilders = new List<SpinPlanBuilder>(spinCount);
-        for (var spinIndex = 0; spinIndex < spinCount; spinIndex++)
-        {
-            var batch = spinIndex < collectionBatches.Count ? collectionBatches[spinIndex] : new CollectionBatch(BoardState.Empty(), DefaultPushValues());
-            spinBuilders.Add(new SpinPlanBuilder(spinIndex, batch.Board, batch.PushValues));
-        }
-
-        SchedulePrizeAndSpinFeatures(request, plannedPrizeLevels, extraSpinsRequired, spinBuilders);
-        ScheduleSpawns(collectionBatches, spinBuilders);
-
-        var initialBoard = collectionBatches.Count > 0 ? collectionBatches[0].Board.Clone() : BoardState.Empty();
-        var planWithoutSnapshots = CreatePlan(request, plannedPrizeLevels, initialBoard, spinBuilders, Array.Empty<BoardState>());
-        var simulation = _simulator.Replay(planWithoutSnapshots);
-        var plan = CreatePlan(request, plannedPrizeLevels, initialBoard, spinBuilders, simulation.BoardTimeline);
-        var verification = _verifier.Verify(plan);
-
-        if (!verification.IsValid)
-        {
-            var detail = string.Join("; ", verification.Issues.Select(issue => issue.Message));
-            throw new PlanningException($"Generated plan failed verification: {detail}");
-        }
-
-        return plan;
-    }
-
-    private static void ValidateRequest(OutcomeRequest request)
-    {
-        if (request.TargetWin < 0)
-        {
-            throw new PlanningException("Target win cannot be negative.");
-        }
-
-        request.FeatureConfiguration.Validate();
-
         if (request.Objectives.Count == 0)
         {
             throw new PlanningException("At least one objective is required.");
         }
 
-        var seenObjectives = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var objective in request.Objectives)
-        {
-            if (!seenObjectives.Add(objective.Id))
-            {
-                throw new PlanningException($"Duplicate objective '{objective.Id}'.");
-            }
-
-            request.Paytable.GetEntry(objective.Id);
-        }
+        return request.Objectives;
     }
+}
 
-    private static IReadOnlyDictionary<string, PrizeLevel> SolvePrizeLevels(OutcomeRequest request)
+public sealed class PrizePlanner
+{
+    public IReadOnlyDictionary<string, PrizeLevel> Solve(OutcomeRequest request)
     {
+        ArgumentNullException.ThrowIfNull(request);
+
         var objectives = request.Objectives.ToArray();
         var selected = new PrizeLevel[objectives.Length];
         var levelOrder = request.StyleProfile.PreferUpgradedPrizes
@@ -117,44 +95,225 @@ public sealed class OutcomePlanner
             return false;
         }
     }
+}
 
-    private static IReadOnlyList<CollectionBatch> BuildCollectionBatches(IReadOnlyList<ObjectiveRequirement> objectives)
+public sealed class ContributionPlanner
+{
+    public ContributionPlan Plan(IReadOnlyList<ObjectiveRequirement> objectives)
     {
-        var cells = new Queue<BoardCell>();
+        ArgumentNullException.ThrowIfNull(objectives);
+
+        var allocations = new List<ObjectiveContributionAllocation>();
+        var units = new List<ContributionUnit>();
+
         foreach (var objective in objectives)
         {
+            allocations.Add(new ObjectiveContributionAllocation(objective.Id, objective.TargetCount, 0, 0));
+
             var remaining = objective.TargetCount;
             while (remaining > 0)
             {
-                var stackSize = Math.Min(EngineConstants.MaximumStackSize, remaining);
-                cells.Enqueue(BoardCell.FromSymbol(objective.Id, stackSize));
-                remaining -= stackSize;
+                var amount = Math.Min(EngineConstants.MaximumStackSize, remaining);
+                units.Add(new ContributionUnit(objective.Id, amount, ContributionSource.Normal));
+                remaining -= amount;
             }
         }
 
-        var batches = new List<CollectionBatch>();
-        while (cells.Count > 0)
+        return new ContributionPlan(allocations, units);
+    }
+}
+
+public sealed class FeasibilitySolver
+{
+    public FeasibilityReport Evaluate(ContributionPlan contributionPlan, FeatureConfiguration featureConfiguration)
+    {
+        ArgumentNullException.ThrowIfNull(contributionPlan);
+        ArgumentNullException.ThrowIfNull(featureConfiguration);
+
+        featureConfiguration.Validate();
+
+        var requiredCells = contributionPlan.Units.Count;
+        var cellsPerSpin = EngineConstants.BoardColumns * EngineConstants.MaximumPushValue;
+        var requiredSpins = Math.Max(1, (int)Math.Ceiling(requiredCells / (double)cellsPerSpin));
+        var isFeasible = requiredSpins >= 1;
+        var reason = isFeasible ? null : "Contribution plan cannot be represented by valid pusher values.";
+
+        return new FeasibilityReport(
+            isFeasible,
+            requiredCells,
+            requiredSpins,
+            featureConfiguration.InitialSpinCount,
+            reason);
+    }
+}
+
+public sealed class TimelinePlanner
+{
+    public TimelinePlan Plan(ContributionPlan contributionPlan, FeatureConfiguration featureConfiguration)
+    {
+        ArgumentNullException.ThrowIfNull(contributionPlan);
+        ArgumentNullException.ThrowIfNull(featureConfiguration);
+
+        var cellsPerSpin = EngineConstants.BoardColumns * EngineConstants.MaximumPushValue;
+        var requiredSpins = Math.Max(1, (int)Math.Ceiling(contributionPlan.Units.Count / (double)cellsPerSpin));
+        var spinCount = Math.Max(featureConfiguration.InitialSpinCount, requiredSpins);
+        var spins = Enumerable
+            .Range(0, spinCount)
+            .Select(spinIndex => new List<ContributionUnit>())
+            .ToArray();
+
+        for (var index = 0; index < contributionPlan.Units.Count; index++)
+        {
+            spins[index % spinCount].Add(contributionPlan.Units[index]);
+        }
+
+        if (spins.Any(spin => spin.Count > cellsPerSpin))
+        {
+            throw new PlanningException("Timeline planner produced a spin that exceeds pusher collection capacity.");
+        }
+
+        return new TimelinePlan(
+            spinCount,
+            Math.Max(0, spinCount - featureConfiguration.InitialSpinCount),
+            spins.Select((spin, index) => new TimelineSpinContributions(index, spin)).ToArray());
+    }
+}
+
+public sealed class BackwardBoardPlanner
+{
+    public IReadOnlyList<PlannedCollectionBatch> Build(TimelinePlan timelinePlan)
+    {
+        ArgumentNullException.ThrowIfNull(timelinePlan);
+
+        var batches = new List<PlannedCollectionBatch>(timelinePlan.Spins.Count);
+        foreach (var spin in timelinePlan.Spins)
         {
             var board = BoardState.Empty();
             var perColumnCounts = new int[EngineConstants.BoardColumns];
-            var batchCount = Math.Min(EngineConstants.BoardColumns * EngineConstants.MaximumPushValue, cells.Count);
 
-            for (var index = 0; index < batchCount; index++)
+            for (var index = 0; index < spin.Contributions.Count; index++)
             {
+                var contribution = spin.Contributions[index];
                 var column = index % EngineConstants.BoardColumns;
                 var depth = index / EngineConstants.BoardColumns;
+                if (depth >= EngineConstants.MaximumPushValue)
+                {
+                    throw new PlanningException($"Spin {spin.SpinIndex} has more contributions than pushers can collect.");
+                }
+
                 var row = EngineConstants.BoardRows - 1 - depth;
-                board.Set(new BoardPosition(row, column), cells.Dequeue());
+                board.Set(new BoardPosition(row, column), BoardCell.FromSymbol(contribution.ObjectiveId, contribution.Amount));
                 perColumnCounts[column]++;
             }
 
             var pushValues = perColumnCounts
                 .Select(count => Math.Max(EngineConstants.MinimumPushValue, count))
                 .ToArray();
-            batches.Add(new CollectionBatch(board, pushValues));
+            batches.Add(new PlannedCollectionBatch(board, pushValues));
         }
 
         return batches;
+    }
+}
+
+public sealed class OutcomePlanner
+{
+    private const string EngineVersion = "1.0.0";
+    private readonly CoinPusherSimulator _simulator;
+    private readonly GamePlanVerifier _verifier;
+    private readonly OutcomeSolver _outcomeSolver;
+    private readonly PrizePlanner _prizePlanner;
+    private readonly ContributionPlanner _contributionPlanner;
+    private readonly FeasibilitySolver _feasibilitySolver;
+    private readonly TimelinePlanner _timelinePlanner;
+    private readonly BackwardBoardPlanner _backwardBoardPlanner;
+
+    public OutcomePlanner(
+        CoinPusherSimulator? simulator = null,
+        GamePlanVerifier? verifier = null,
+        OutcomeSolver? outcomeSolver = null,
+        PrizePlanner? prizePlanner = null,
+        ContributionPlanner? contributionPlanner = null,
+        FeasibilitySolver? feasibilitySolver = null,
+        TimelinePlanner? timelinePlanner = null,
+        BackwardBoardPlanner? backwardBoardPlanner = null)
+    {
+        _simulator = simulator ?? new CoinPusherSimulator();
+        _verifier = verifier ?? new GamePlanVerifier(_simulator);
+        _outcomeSolver = outcomeSolver ?? new OutcomeSolver();
+        _prizePlanner = prizePlanner ?? new PrizePlanner();
+        _contributionPlanner = contributionPlanner ?? new ContributionPlanner();
+        _feasibilitySolver = feasibilitySolver ?? new FeasibilitySolver();
+        _timelinePlanner = timelinePlanner ?? new TimelinePlanner();
+        _backwardBoardPlanner = backwardBoardPlanner ?? new BackwardBoardPlanner();
+    }
+
+    public GamePlan Generate(OutcomeRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ValidateRequest(request);
+
+        var objectives = _outcomeSolver.Solve(request);
+        var plannedPrizeLevels = _prizePlanner.Solve(request);
+        var contributionPlan = _contributionPlanner.Plan(objectives);
+        var feasibility = _feasibilitySolver.Evaluate(contributionPlan, request.FeatureConfiguration);
+        if (!feasibility.IsFeasible)
+        {
+            throw new PlanningException(feasibility.Reason ?? "Requested outcome is not feasible.");
+        }
+
+        var timelinePlan = _timelinePlanner.Plan(contributionPlan, request.FeatureConfiguration);
+        var collectionBatches = _backwardBoardPlanner.Build(timelinePlan);
+
+        var spinBuilders = new List<SpinPlanBuilder>(timelinePlan.SpinCount);
+        for (var spinIndex = 0; spinIndex < timelinePlan.SpinCount; spinIndex++)
+        {
+            var batch = spinIndex < collectionBatches.Count ? collectionBatches[spinIndex] : new PlannedCollectionBatch(BoardState.Empty(), DefaultPushValues());
+            spinBuilders.Add(new SpinPlanBuilder(spinIndex, batch.Board, batch.PushValues));
+        }
+
+        SchedulePrizeAndSpinFeatures(request, plannedPrizeLevels, timelinePlan.ExtraSpinsRequired, spinBuilders);
+        ScheduleSpawns(collectionBatches, spinBuilders);
+
+        var initialBoard = collectionBatches.Count > 0 ? collectionBatches[0].Board.Clone() : BoardState.Empty();
+        var planWithoutSnapshots = CreatePlan(request, plannedPrizeLevels, initialBoard, spinBuilders, Array.Empty<BoardState>());
+        var simulation = _simulator.Replay(planWithoutSnapshots);
+        var plan = CreatePlan(request, plannedPrizeLevels, initialBoard, spinBuilders, simulation.BoardTimeline);
+        var verification = _verifier.Verify(plan);
+
+        if (!verification.IsValid)
+        {
+            var detail = string.Join("; ", verification.Issues.Select(issue => issue.Message));
+            throw new PlanningException($"Generated plan failed verification: {detail}");
+        }
+
+        return plan;
+    }
+
+    private static void ValidateRequest(OutcomeRequest request)
+    {
+        if (request.TargetWin < 0)
+        {
+            throw new PlanningException("Target win cannot be negative.");
+        }
+
+        request.FeatureConfiguration.Validate();
+
+        if (request.Objectives.Count == 0)
+        {
+            throw new PlanningException("At least one objective is required.");
+        }
+
+        var seenObjectives = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var objective in request.Objectives)
+        {
+            if (!seenObjectives.Add(objective.Id))
+            {
+                throw new PlanningException($"Duplicate objective '{objective.Id}'.");
+            }
+
+            request.Paytable.GetEntry(objective.Id);
+        }
     }
 
     private static void SchedulePrizeAndSpinFeatures(
@@ -225,7 +384,7 @@ public sealed class OutcomePlanner
         }
     }
 
-    private static void ScheduleSpawns(IReadOnlyList<CollectionBatch> collectionBatches, IReadOnlyList<SpinPlanBuilder> spinBuilders)
+    private static void ScheduleSpawns(IReadOnlyList<PlannedCollectionBatch> collectionBatches, IReadOnlyList<SpinPlanBuilder> spinBuilders)
     {
         for (var spinIndex = 0; spinIndex < spinBuilders.Count - 1; spinIndex++)
         {
@@ -273,8 +432,6 @@ public sealed class OutcomePlanner
     private static int[] DefaultPushValues() =>
         Enumerable.Repeat(EngineConstants.MinimumPushValue, EngineConstants.BoardColumns).ToArray();
 
-    private sealed record CollectionBatch(BoardState Board, IReadOnlyList<int> PushValues);
-
     private sealed class SpinPlanBuilder
     {
         public SpinPlanBuilder(int spinIndex, BoardState startBoard, IReadOnlyList<int> pushValues)
@@ -307,7 +464,7 @@ public sealed class OutcomePlanner
                 FeatureActions,
                 FeatureConversions,
                 PushValues,
-                BoardRotation.None,
+                BoardRotation.Clockwise,
                 Spawns);
     }
 

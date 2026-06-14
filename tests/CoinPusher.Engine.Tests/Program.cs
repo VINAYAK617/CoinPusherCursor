@@ -3,7 +3,11 @@ using CoinPusher.Engine;
 var tests = new (string Name, Action Run)[]
 {
     ("planner creates exact verified outcome", PlannerCreatesExactVerifiedOutcome),
+    ("planner uses clockwise rotation and paced timeline", PlannerUsesClockwiseRotationAndPacedTimeline),
+    ("timeline planner requests extra spin capacity", TimelinePlannerRequestsExtraSpinCapacity),
+    ("wheel uses documented stack increment formula", WheelUsesDocumentedStackIncrementFormula),
     ("wheel caps stacks and harvests potential", WheelCapsStacksAndHarvestsPotential),
+    ("filler symbols do not contribute to objectives", FillerSymbolsDoNotContributeToObjectives),
     ("verifier rejects over collection", VerifierRejectsOverCollection),
     ("verifier rejects invalid feature chain", VerifierRejectsInvalidFeatureChain)
 };
@@ -67,6 +71,54 @@ static void PlannerCreatesExactVerifiedOutcome()
     Assert.True(plan.BoardStates.Count == plan.Spins.Count + 1, "Plan should include deterministic board snapshots.");
 }
 
+static void PlannerUsesClockwiseRotationAndPacedTimeline()
+{
+    var request = OutcomeRequest.Create(
+        10,
+        new[] { new ObjectiveRequirement("A", 30) },
+        new PaytableConfiguration(new Dictionary<string, PrizeTableEntry> { ["A"] = new(10, 10, 10) }));
+
+    var plan = new OutcomePlanner().Generate(request);
+    var report = new GamePlanVerifier().Verify(plan);
+
+    Assert.True(report.IsValid, string.Join("; ", report.Issues.Select(issue => issue.Message)));
+    Assert.True(plan.Spins.All(spin => spin.Rotation == BoardRotation.Clockwise), "Generated spins should use official clockwise rotation.");
+    Assert.Equal(5, report.SimulationResult!.Spins.Count(spin => spin.Collections.Count > 0));
+}
+
+static void TimelinePlannerRequestsExtraSpinCapacity()
+{
+    var objectives = new[] { new ObjectiveRequirement("A", 600) };
+    var contributionPlan = new ContributionPlanner().Plan(objectives);
+    var timeline = new TimelinePlanner().Plan(contributionPlan, new FeatureConfiguration());
+
+    Assert.Equal(6, timeline.SpinCount);
+    Assert.Equal(1, timeline.ExtraSpinsRequired);
+    Assert.True(timeline.Spins.All(spin => spin.Contributions.Count <= 15), "No spin should exceed pusher collection capacity.");
+}
+
+static void WheelUsesDocumentedStackIncrementFormula()
+{
+    var board = BoardState.Empty();
+    board.Set(new BoardPosition(4, 0), BoardCell.FromSymbol("A", 1));
+    board.Set(new BoardPosition(0, 1), BoardCell.FromFeature(FeatureKind.Wheel));
+
+    var spin = new SpinPlan(
+        0,
+        Array.Empty<FeatureLanding>(),
+        new FeatureAction[] { new WheelAction(new BoardPosition(0, 1), "A", 2) },
+        new[] { new FeatureConversion(new BoardPosition(0, 1), BoardCell.Empty) },
+        new[] { 1, 1, 1, 1, 1 },
+        BoardRotation.None,
+        Array.Empty<SpawnInstruction>());
+
+    var plan = SingleObjectivePlan(4, 10, board, spin);
+    var report = new GamePlanVerifier().Verify(plan);
+
+    Assert.True(report.IsValid, string.Join("; ", report.Issues.Select(issue => issue.Message)));
+    Assert.Equal(4, report.SimulationResult!.CollectionCounts["A"]);
+}
+
 static void WheelCapsStacksAndHarvestsPotential()
 {
     var board = BoardState.Empty();
@@ -87,6 +139,28 @@ static void WheelCapsStacksAndHarvestsPotential()
 
     Assert.True(report.IsValid, string.Join("; ", report.Issues.Select(issue => issue.Message)));
     Assert.Equal(7, report.SimulationResult!.CollectionCounts["A"]);
+}
+
+static void FillerSymbolsDoNotContributeToObjectives()
+{
+    var board = BoardState.Empty();
+    board.Set(new BoardPosition(4, 0), BoardCell.FromSymbol("A", 1));
+    board.Set(new BoardPosition(4, 1), BoardCell.FromFillerSymbol("Bell", 7));
+
+    var spin = new SpinPlan(
+        0,
+        Array.Empty<FeatureLanding>(),
+        Array.Empty<FeatureAction>(),
+        Array.Empty<FeatureConversion>(),
+        new[] { 1, 1, 1, 1, 1 },
+        BoardRotation.None,
+        Array.Empty<SpawnInstruction>());
+
+    var plan = SingleObjectivePlan(1, 10, board, spin);
+    var report = new GamePlanVerifier().Verify(plan);
+
+    Assert.True(report.IsValid, string.Join("; ", report.Issues.Select(issue => issue.Message)));
+    Assert.Equal(1, report.SimulationResult!.CollectionCounts["A"]);
 }
 
 static void VerifierRejectsOverCollection()

@@ -211,23 +211,28 @@ public sealed record OutcomeRequest(
 
 public sealed record SymbolToken
 {
-    public SymbolToken(string objectiveId, int stackSize = 1)
+    public SymbolToken(string symbolId, int stackSize = 1, bool contributesToObjective = true)
     {
-        ObjectiveId = ObjectiveRequirement.NormalizeObjectiveId(objectiveId);
+        SymbolId = ObjectiveRequirement.NormalizeObjectiveId(symbolId);
         if (stackSize <= 0 || stackSize > EngineConstants.MaximumStackSize)
         {
             throw new ArgumentOutOfRangeException(nameof(stackSize), stackSize, "Stack size must be between 1 and 7.");
         }
 
         StackSize = stackSize;
+        ContributesToObjective = contributesToObjective;
     }
 
-    public string ObjectiveId { get; }
+    public string SymbolId { get; }
+
+    public string ObjectiveId => SymbolId;
 
     public int StackSize { get; }
 
+    public bool ContributesToObjective { get; }
+
     public SymbolToken AddStacks(int stacks) =>
-        new(ObjectiveId, Math.Min(EngineConstants.MaximumStackSize, StackSize + stacks));
+        new(SymbolId, Math.Min(EngineConstants.MaximumStackSize, StackSize + stacks), ContributesToObjective);
 }
 
 public sealed record FeatureToken
@@ -271,6 +276,9 @@ public sealed record BoardCell
     public static BoardCell FromSymbol(SymbolToken symbol) =>
         new(CellKind.Symbol, symbol, null);
 
+    public static BoardCell FromFillerSymbol(string symbolId, int stackSize = 1) =>
+        new(CellKind.Symbol, new SymbolToken(symbolId, stackSize, contributesToObjective: false), null);
+
     public static BoardCell FromFeature(FeatureKind kind, int chainDepth = 0) =>
         new(CellKind.Feature, null, new FeatureToken(kind, chainDepth));
 
@@ -281,7 +289,9 @@ public sealed record BoardCell
         Kind switch
         {
             CellKind.Empty => ".",
-            CellKind.Symbol => $"{Symbol!.ObjectiveId}x{Symbol.StackSize}",
+            CellKind.Symbol => Symbol!.ContributesToObjective
+                ? $"{Symbol.SymbolId}x{Symbol.StackSize}"
+                : $"{Symbol.SymbolId}x{Symbol.StackSize}*",
             CellKind.Feature => $"{Feature!.Kind}@{Feature.ChainDepth}",
             _ => "?"
         };
