@@ -24,6 +24,7 @@ var tests = new (string Name, Action Run)[]
     ("console trace prints board formation and spin states", ConsoleTracePrintsBoardFormationAndSpinStates),
     ("json exporter emits requested protocol shape", JsonExporterEmitsRequestedProtocolShape),
     ("manual feature mechanics verify", ManualFeatureMechanicsVerify),
+    ("feature demo visibly includes wheel and flush", FeatureDemoVisiblyIncludesWheelAndFlush),
     ("deterministic load scenarios verify", DeterministicLoadScenariosVerify),
     ("wheel uses documented stack increment formula", WheelUsesDocumentedStackIncrementFormula),
     ("wheel caps stacks and harvests potential", WheelCapsStacksAndHarvestsPotential),
@@ -282,6 +283,21 @@ static void ManualFeatureMechanicsVerify()
     ExtraSpinFeatureExtendsTimeline();
     FlushFeatureCollectsFullColumn();
     ValidFeatureChainIsAccepted();
+}
+
+static void FeatureDemoVisiblyIncludesWheelAndFlush()
+{
+    var plan = FeatureDemoPlanFactory.Create();
+    var report = new GamePlanVerifier().Verify(plan);
+    Assert.True(report.IsValid, string.Join("; ", report.Issues.Select(issue => issue.Message)));
+    Assert.True(plan.Spins.Any(spin => spin.FeatureActions.OfType<WheelAction>().Any()), "Feature demo should include Wheel.");
+    Assert.True(plan.Spins.Any(spin => spin.FeatureActions.OfType<FlushAction>().Any()), "Feature demo should include Flush.");
+
+    var json = new GamePlanJsonExporter().Export(plan);
+    Assert.Contains(json, "\"featureId\": 11");
+    Assert.Contains(json, "\"featureId\": 14");
+    Assert.Contains(json, "\"wheelSymbolId\"");
+    Assert.Contains(json, "\"column\"");
 }
 
 static void PrizeUpgradeFeatureAppliesPayoutOnly()

@@ -1010,6 +1010,13 @@ Run:
 dotnet run --project src/CoinPusher.Engine.App -- --json
 ```
 
+To inspect a small verified plan that visibly contains Wheel and Flush:
+
+```bash
+dotnet run --project src/CoinPusher.Engine.App -- --feature-demo
+dotnet run --project src/CoinPusher.Engine.App -- --feature-demo --json
+```
+
 Output shape:
 
 ```json

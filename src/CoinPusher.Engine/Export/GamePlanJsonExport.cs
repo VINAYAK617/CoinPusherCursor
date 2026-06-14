@@ -186,7 +186,7 @@ public sealed class GamePlanJsonExporter
         {
             case WheelAction wheel:
                 dto.WheelSymbolId = GetSymbolId(wheel.TargetObjectiveId);
-                dto.WheelStackMultiplier = 1 + wheel.WheelValue;
+                dto.WheelStackMultiplier = 2 + wheel.WheelValue;
                 break;
             case PrizeUpgradeAction:
                 dto.UPrize = conversion?.Replacement.Symbol?.StackSize;

@@ -2,6 +2,7 @@ using CoinPusher.Engine;
 
 var traceEnabled = !args.Contains("--quiet", StringComparer.OrdinalIgnoreCase);
 var jsonEnabled = args.Contains("--json", StringComparer.OrdinalIgnoreCase);
+var featureDemoEnabled = args.Contains("--feature-demo", StringComparer.OrdinalIgnoreCase);
 IEngineTraceSink trace = traceEnabled ? new ConsoleEngineTraceSink() : NullEngineTraceSink.Instance;
 
 if (jsonEnabled)
@@ -18,10 +19,10 @@ else
     Console.WriteLine();
 }
 
-var request = CreateDemoRequest();
-var planner = new OutcomePlanner(trace: trace);
-var plan = planner.Generate(request);
-var verifier = new GamePlanVerifier();
+var plan = featureDemoEnabled
+    ? FeatureDemoPlanFactory.Create()
+    : new OutcomePlanner(trace: trace).Generate(CreateDemoRequest());
+var verifier = new GamePlanVerifier(featureDemoEnabled ? new CoinPusherSimulator(trace) : null);
 var report = verifier.Verify(plan);
 
 if (jsonEnabled)

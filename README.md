@@ -135,6 +135,13 @@ Use `--json` to print the protocol payload:
 dotnet run --project src/CoinPusher.Engine.App -- --json
 ```
 
+Use `--feature-demo` to run a verified demo containing Wheel and Flush:
+
+```bash
+dotnet run --project src/CoinPusher.Engine.App -- --feature-demo
+dotnet run --project src/CoinPusher.Engine.App -- --feature-demo --json
+```
+
 ## Build and test
 
 ```bash
@@ -143,6 +150,7 @@ dotnet run --project tests/CoinPusher.Engine.Tests
 dotnet run --project tests/CoinPusher.Engine.Tests -- --load
 dotnet run --project src/CoinPusher.Engine.App -- --quiet
 dotnet run --project src/CoinPusher.Engine.App -- --json
+dotnet run --project src/CoinPusher.Engine.App -- --feature-demo --json
 ```
 
 These commands require the .NET 8 SDK.
