@@ -3,6 +3,11 @@
 Deterministic C# engine for generating, replaying, and verifying outcome-driven
 coin-pusher sessions.
 
+For a complete explanation of the engine, planning model, backward board
+reconstruction, examples, and invariants, see:
+
+- [`docs/coin-pusher-outcome-engine-tdd.md`](docs/coin-pusher-outcome-engine-tdd.md)
+
 ## What is implemented
 
 - 5x5 board model with symbol stacks and feature cells
