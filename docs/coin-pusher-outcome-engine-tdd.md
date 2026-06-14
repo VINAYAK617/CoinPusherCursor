@@ -1089,7 +1089,45 @@ If any of these happen, the plan is invalid.
 
 ---
 
-## 25. Current Implementation Map
+## 25. Load and Scenario Testing
+
+The repository includes deterministic load tests that exercise:
+
+- many generated outcome requests
+- different objective symbol sets
+- different symbol thresholds
+- extra-spin capacity
+- backward board continuity
+- JSON export validity
+- manual feature mechanics:
+  - wheel
+  - flush
+  - extra spin
+  - prize upgrade
+  - valid feature chain
+  - invalid feature chain
+
+Run:
+
+```bash
+dotnet run --project tests/CoinPusher.Engine.Tests -- --load
+```
+
+Expected output:
+
+```text
+LOAD TEST PASS
+Scenarios : 100
+Min spins : ...
+Max spins : ...
+Avg spins : ...
+```
+
+This load test is deterministic, so failures are reproducible.
+
+---
+
+## 26. Current Implementation Map
 
 Source layout:
 
@@ -1142,7 +1180,7 @@ dotnet run --project src/CoinPusher.Engine.App -- --quiet
 
 ---
 
-## 26. Final Success Condition
+## 27. Final Success Condition
 
 A generated session is successful only when:
 

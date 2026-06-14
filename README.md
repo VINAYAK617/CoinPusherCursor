@@ -140,6 +140,7 @@ dotnet run --project src/CoinPusher.Engine.App -- --json
 ```bash
 dotnet build CoinPusherOutcomeEngine.sln
 dotnet run --project tests/CoinPusher.Engine.Tests
+dotnet run --project tests/CoinPusher.Engine.Tests -- --load
 dotnet run --project src/CoinPusher.Engine.App -- --quiet
 dotnet run --project src/CoinPusher.Engine.App -- --json
 ```
