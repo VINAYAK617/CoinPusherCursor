@@ -290,6 +290,7 @@ static void FeatureDemoVisiblyIncludesWheelAndFlush()
     var plan = FeatureDemoPlanFactory.Create();
     var report = new GamePlanVerifier().Verify(plan);
     Assert.True(report.IsValid, string.Join("; ", report.Issues.Select(issue => issue.Message)));
+    Assert.Equal(5, plan.Spins.Count);
     Assert.True(plan.Spins.Any(spin => spin.FeatureActions.OfType<WheelAction>().Any()), "Feature demo should include Wheel.");
     Assert.True(plan.Spins.Any(spin => spin.FeatureActions.OfType<FlushAction>().Any()), "Feature demo should include Flush.");
 

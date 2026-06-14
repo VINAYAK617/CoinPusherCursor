@@ -2,10 +2,12 @@ namespace CoinPusher.Engine;
 
 public static class FeatureDemoPlanFactory
 {
+    private static readonly string[] NonTargetSymbols = ["E", "F", "G", "H", "I", "J"];
+
     public static GamePlan Create()
     {
         var initialBoard = BoardState.Empty();
-        FillNonTargets(initialBoard);
+        FillNonTargets(initialBoard, offset: 0);
 
         initialBoard.Set(new BoardPosition(4, 0), BoardCell.FromSymbol("A"));
         initialBoard.Set(new BoardPosition(0, 1), BoardCell.FromSymbol("B"));
@@ -13,26 +15,41 @@ public static class FeatureDemoPlanFactory
 
         var wheelPosition = new BoardPosition(0, 2);
         var flushPosition = new BoardPosition(0, 3);
-        var spin = new SpinPlan(
-            0,
-            new[]
-            {
-                new FeatureLanding(wheelPosition, new FeatureToken(FeatureKind.Wheel)),
-                new FeatureLanding(flushPosition, new FeatureToken(FeatureKind.Flush))
-            },
-            new FeatureAction[]
-            {
-                new WheelAction(wheelPosition, "A", 2),
-                new FlushAction(flushPosition, 1)
-            },
-            new[]
-            {
-                new FeatureConversion(wheelPosition, BoardCell.FromSymbol("E")),
-                new FeatureConversion(flushPosition, BoardCell.FromSymbol("F"))
-            },
-            new[] { 1, 1, 1, 1, 1 },
-            BoardRotation.Clockwise,
-            CreateFinalSpawns());
+        var spins = new List<SpinPlan>
+        {
+            new(
+                0,
+                new[]
+                {
+                    new FeatureLanding(wheelPosition, new FeatureToken(FeatureKind.Wheel)),
+                    new FeatureLanding(flushPosition, new FeatureToken(FeatureKind.Flush))
+                },
+                new FeatureAction[]
+                {
+                    new WheelAction(wheelPosition, "A", 2),
+                    new FlushAction(flushPosition, 1)
+                },
+                new[]
+                {
+                    new FeatureConversion(wheelPosition, BoardCell.FromSymbol("E")),
+                    new FeatureConversion(flushPosition, BoardCell.FromSymbol("F"))
+                },
+                new[] { 1, 1, 1, 1, 1 },
+                BoardRotation.Clockwise,
+                CreateColumnSpawns(0, EngineConstants.BoardColumns - 1))
+        };
+
+        for (var spinIndex = 1; spinIndex < 5; spinIndex++)
+        {
+            spins.Add(new SpinPlan(
+                spinIndex,
+                Array.Empty<FeatureLanding>(),
+                Array.Empty<FeatureAction>(),
+                Array.Empty<FeatureConversion>(),
+                new[] { 1, 1, 1, 1, 1 },
+                BoardRotation.Clockwise,
+                CreateColumnSpawns(spinIndex, EngineConstants.BoardColumns - 1)));
+        }
 
         return new GamePlan(
             20,
@@ -66,32 +83,31 @@ public static class FeatureDemoPlanFactory
                 ["J"] = 30
             },
             initialBoard,
-            new[] { spin },
+            spins,
             Array.Empty<BoardState>(),
             new VerificationMetadata("feature-demo", 5, nameof(FeatureDemoPlanFactory), DateTimeOffset.UtcNow));
     }
 
-    private static void FillNonTargets(BoardState board)
+    private static void FillNonTargets(BoardState board, int offset)
     {
-        var symbols = new[] { "E", "F", "G", "H", "I", "J" };
         for (var row = 0; row < EngineConstants.BoardRows; row++)
         {
             for (var column = 0; column < EngineConstants.BoardColumns; column++)
             {
-                var symbol = symbols[(row + column) % symbols.Length];
+                var symbol = NonTargetSymbols[(offset + row + column) % NonTargetSymbols.Length];
                 board.Set(new BoardPosition(row, column), BoardCell.FromSymbol(symbol));
             }
         }
     }
 
-    private static IReadOnlyList<SpawnInstruction> CreateFinalSpawns()
+    private static IReadOnlyList<SpawnInstruction> CreateColumnSpawns(int spinIndex, int column)
     {
         var spawns = new List<SpawnInstruction>();
-        var symbols = new[] { "E", "F", "G", "H", "I", "J" };
         for (var row = 0; row < EngineConstants.BoardRows; row++)
         {
-            var position = new BoardPosition(row, EngineConstants.BoardColumns - 1);
-            spawns.Add(new SpawnInstruction(position, BoardCell.FromSymbol(symbols[row % symbols.Length])));
+            var position = new BoardPosition(row, column);
+            var symbol = NonTargetSymbols[(spinIndex + row + column) % NonTargetSymbols.Length];
+            spawns.Add(new SpawnInstruction(position, BoardCell.FromSymbol(symbol)));
         }
 
         return spawns;
