@@ -29,6 +29,15 @@ coin-pusher sessions.
 - `src/CoinPusher.Engine` - domain model, simulator, verifier, and planner
 - `tests/CoinPusher.Engine.Tests` - dependency-free executable test harness
 
+## Source layout
+
+- `Abstractions/` - interfaces for planner stages, simulator, verifier, and trace sinks
+- `Diagnostics/` - board formatting and console/no-op trace sinks
+- `Planning/` - outcome, prize, feasibility, contribution, timeline, and backward-board planners
+- `Simulation/` - replay models and deterministic game simulator
+- `Verification/` - verification models and final plan verifier
+- `BoardState.cs` / `Domain.cs` - board mechanics and core game contracts
+
 ## Engine modules
 
 The implementation exposes the major TDD pipeline stages as separate C# types:
@@ -66,6 +75,23 @@ var request = OutcomeRequest.Create(
 
 var plan = new OutcomePlanner().Generate(request);
 var report = new GamePlanVerifier().Verify(plan);
+```
+
+## Console board/state tracing
+
+Pass `ConsoleEngineTraceSink` to the planner or simulator to print board
+formation and spin lifecycle state changes:
+
+```csharp
+var trace = new ConsoleEngineTraceSink();
+var plan = new OutcomePlanner(trace: trace).Generate(request);
+var result = new CoinPusherSimulator(trace).Replay(plan);
+```
+
+To see a complete trace demo:
+
+```bash
+dotnet run --project tests/CoinPusher.Engine.Tests -- --trace-demo
 ```
 
 ## Build and test

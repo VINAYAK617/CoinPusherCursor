@@ -1,10 +1,17 @@
 using CoinPusher.Engine;
 
+if (args.Contains("--trace-demo", StringComparer.Ordinal))
+{
+    RunTraceDemo();
+    return;
+}
+
 var tests = new (string Name, Action Run)[]
 {
     ("planner creates exact verified outcome", PlannerCreatesExactVerifiedOutcome),
     ("planner uses clockwise rotation and paced timeline", PlannerUsesClockwiseRotationAndPacedTimeline),
     ("timeline planner requests extra spin capacity", TimelinePlannerRequestsExtraSpinCapacity),
+    ("console trace prints board formation and spin states", ConsoleTracePrintsBoardFormationAndSpinStates),
     ("wheel uses documented stack increment formula", WheelUsesDocumentedStackIncrementFormula),
     ("wheel caps stacks and harvests potential", WheelCapsStacksAndHarvestsPotential),
     ("filler symbols do not contribute to objectives", FillerSymbolsDoNotContributeToObjectives),
@@ -95,6 +102,31 @@ static void TimelinePlannerRequestsExtraSpinCapacity()
     Assert.Equal(6, timeline.SpinCount);
     Assert.Equal(1, timeline.ExtraSpinsRequired);
     Assert.True(timeline.Spins.All(spin => spin.Contributions.Count <= 15), "No spin should exceed pusher collection capacity.");
+}
+
+static void ConsoleTracePrintsBoardFormationAndSpinStates()
+{
+    var originalOut = Console.Out;
+    using var writer = new StringWriter();
+    try
+    {
+        Console.SetOut(writer);
+        var request = SimpleTraceRequest();
+        var plan = new OutcomePlanner(trace: new ConsoleEngineTraceSink()).Generate(request);
+
+        Assert.True(plan.Spins.Count > 0, "Trace test should produce a plan.");
+    }
+    finally
+    {
+        Console.SetOut(originalOut);
+    }
+
+    var output = writer.ToString();
+    Assert.Contains(output, "[board-planner] Building");
+    Assert.Contains(output, "=== planned start board for spin 0 ===");
+    Assert.Contains(output, "=== spin 0 start ===");
+    Assert.Contains(output, "=== spin 0 after rotation ===");
+    Assert.Contains(output, "[simulator] Replay end.");
 }
 
 static void WheelUsesDocumentedStackIncrementFormula()
@@ -217,6 +249,38 @@ static GamePlan SingleObjectivePlan(int targetCount, int targetWin, BoardState i
         Array.Empty<BoardState>(),
         new VerificationMetadata("test", 5, "test", DateTimeOffset.UnixEpoch));
 
+static OutcomeRequest SimpleTraceRequest() =>
+    OutcomeRequest.Create(
+        30,
+        new[]
+        {
+            new ObjectiveRequirement("Gold", 8),
+            new ObjectiveRequirement("Star", 6)
+        },
+        new PaytableConfiguration(new Dictionary<string, PrizeTableEntry>
+        {
+            ["Gold"] = new(10, 20, 20),
+            ["Star"] = new(10, 10, 10)
+        }));
+
+static void RunTraceDemo()
+{
+    Console.WriteLine("Coin Pusher Outcome Engine trace demo");
+    Console.WriteLine("-------------------------------------");
+    var request = SimpleTraceRequest();
+    var plan = new OutcomePlanner(trace: new ConsoleEngineTraceSink()).Generate(request);
+    var report = new GamePlanVerifier(new CoinPusherSimulator(new ConsoleEngineTraceSink())).Verify(plan);
+
+    Console.WriteLine();
+    Console.WriteLine($"Verifier: {(report.IsValid ? "PASS" : "FAIL")}");
+    if (report.SimulationResult is not null)
+    {
+        Console.WriteLine($"Final counts: {BoardFormatter.FormatCounts(report.SimulationResult.CollectionCounts)}");
+        Console.WriteLine($"Final prizes: {BoardFormatter.FormatPrizeLevels(report.SimulationResult.PrizeLevels)}");
+        Console.WriteLine($"Final payout: {report.SimulationResult.FinalPayout}");
+    }
+}
+
 static class Assert
 {
     public static void True(bool condition, string message)
@@ -243,6 +307,14 @@ static class Assert
         if (!values.Any(predicate))
         {
             throw new InvalidOperationException("Expected sequence to contain a matching item.");
+        }
+    }
+
+    public static void Contains(string value, string expected)
+    {
+        if (!value.Contains(expected, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException($"Expected output to contain '{expected}'.");
         }
     }
 }

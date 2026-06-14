@@ -1,27 +1,14 @@
 namespace CoinPusher.Engine;
 
-public sealed record CollectionEvent(
-    int SpinIndex,
-    string ObjectiveId,
-    int Amount,
-    CollectionSource Source,
-    BoardPosition Position);
-
-public sealed record SpinSimulationResult(
-    int SpinIndex,
-    BoardState StartBoard,
-    BoardState EndBoard,
-    IReadOnlyList<CollectionEvent> Collections);
-
-public sealed record SimulationResult(
-    IReadOnlyDictionary<string, int> CollectionCounts,
-    IReadOnlyDictionary<string, PrizeLevel> PrizeLevels,
-    int FinalPayout,
-    IReadOnlyList<SpinSimulationResult> Spins,
-    IReadOnlyList<BoardState> BoardTimeline);
-
-public sealed class CoinPusherSimulator
+public sealed class CoinPusherSimulator : IGameSimulator
 {
+    private readonly IEngineTraceSink _trace;
+
+    public CoinPusherSimulator(IEngineTraceSink? trace = null)
+    {
+        _trace = trace ?? NullEngineTraceSink.Instance;
+    }
+
     public SimulationResult Replay(GamePlan plan)
     {
         ArgumentNullException.ThrowIfNull(plan);
@@ -40,6 +27,9 @@ public sealed class CoinPusherSimulator
         var availableSpins = plan.FeatureConfiguration.InitialSpinCount;
         var timeline = new List<BoardState> { board.Clone() };
         var spinResults = new List<SpinSimulationResult>();
+
+        Trace($"[simulator] Replay start. initialSpins={availableSpins}, plannedSpins={plan.Spins.Count}");
+        TraceBoard("replay initial board", board);
 
         for (var spinIndex = 0; spinIndex < plan.Spins.Count; spinIndex++)
         {
@@ -62,14 +52,31 @@ public sealed class CoinPusherSimulator
             var startBoard = board.Clone();
             var spinCollections = new List<CollectionEvent>();
 
+            Trace($"[spin {spinIndex}] start: pushers=[{string.Join(", ", spin.PushValues)}], rotation={spin.Rotation}");
+            TraceBoard($"spin {spinIndex} start", board);
+
             ApplyFeatureLandings(board, spin);
+            TraceBoard($"spin {spinIndex} after feature landing", board);
+
             ApplyFeatureActions(board, spin, prizeLevels, collectionCounts, targetCounts, spinCollections, ref availableSpins);
+            Trace($"[spin {spinIndex}] after feature activation: availableSpins={availableSpins}, prizes={BoardFormatter.FormatPrizeLevels(prizeLevels)}");
+            TraceBoard($"spin {spinIndex} after feature activation", board);
+
             ApplyFeatureConversions(board, spin);
+            TraceBoard($"spin {spinIndex} after feature conversion", board);
+
             ApplyPushes(board, spin, collectionCounts, targetCounts, spinCollections);
+            Trace($"[spin {spinIndex}] collections: {FormatCollections(spinCollections)}");
+            Trace($"[spin {spinIndex}] counts: {BoardFormatter.FormatCounts(collectionCounts)}");
+            TraceBoard($"spin {spinIndex} after collection", board);
+
             board.Rotate(spin.Rotation);
             board.Validate();
+            TraceBoard($"spin {spinIndex} after rotation", board);
+
             ApplySpawns(board, spin);
             board.Validate();
+            TraceBoard($"spin {spinIndex} after spawn/end", board);
 
             spinResults.Add(new SpinSimulationResult(spinIndex, startBoard, board.Clone(), spinCollections));
             timeline.Add(board.Clone());
@@ -86,6 +93,7 @@ public sealed class CoinPusherSimulator
         }
 
         var finalPayout = CalculatePayout(plan, prizeLevels);
+        Trace($"[simulator] Replay end. counts={BoardFormatter.FormatCounts(collectionCounts)}, prizes={BoardFormatter.FormatPrizeLevels(prizeLevels)}, payout={finalPayout}");
         return new SimulationResult(collectionCounts, prizeLevels, finalPayout, spinResults, timeline);
     }
 
@@ -402,89 +410,30 @@ public sealed class CoinPusherSimulator
 
         return payout;
     }
-}
 
-public enum VerificationSeverity
-{
-    Error
-}
-
-public sealed record VerificationIssue(VerificationSeverity Severity, string Code, string Message);
-
-public sealed record VerificationReport(bool IsValid, IReadOnlyList<VerificationIssue> Issues, SimulationResult? SimulationResult);
-
-public sealed class GamePlanVerifier
-{
-    private readonly CoinPusherSimulator _simulator;
-
-    public GamePlanVerifier(CoinPusherSimulator? simulator = null)
+    private static string FormatCollections(IReadOnlyList<CollectionEvent> collections)
     {
-        _simulator = simulator ?? new CoinPusherSimulator();
+        if (collections.Count == 0)
+        {
+            return "none";
+        }
+
+        return string.Join(", ", collections.Select(collection => $"{collection.ObjectiveId}+={collection.Amount} ({collection.Source} {collection.Position})"));
     }
 
-    public VerificationReport Verify(GamePlan plan)
+    private void Trace(string message)
     {
-        var issues = new List<VerificationIssue>();
-        SimulationResult? result = null;
-
-        try
+        if (_trace.IsEnabled)
         {
-            result = _simulator.Replay(plan);
-            VerifyObjectiveCompletion(plan, result, issues);
-            VerifyPrizeLevels(plan, result, issues);
-            VerifyPayout(plan, result, issues);
-        }
-        catch (OutcomeEngineException exception)
-        {
-            issues.Add(new VerificationIssue(VerificationSeverity.Error, "replay_failed", exception.Message));
-        }
-        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or KeyNotFoundException)
-        {
-            issues.Add(new VerificationIssue(VerificationSeverity.Error, "invalid_plan", exception.Message));
-        }
-
-        return new VerificationReport(issues.Count == 0, issues, result);
-    }
-
-    private static void VerifyObjectiveCompletion(GamePlan plan, SimulationResult result, ICollection<VerificationIssue> issues)
-    {
-        foreach (var objective in plan.Objectives)
-        {
-            var actual = result.CollectionCounts[objective.Id];
-            if (actual != objective.TargetCount)
-            {
-                issues.Add(new VerificationIssue(
-                    VerificationSeverity.Error,
-                    "objective_mismatch",
-                    $"Objective '{objective.Id}' expected {objective.TargetCount}, collected {actual}."));
-            }
+            _trace.Write(message);
         }
     }
 
-    private static void VerifyPrizeLevels(GamePlan plan, SimulationResult result, ICollection<VerificationIssue> issues)
+    private void TraceBoard(string title, BoardState board)
     {
-        foreach (var objective in plan.Objectives)
+        if (_trace.IsEnabled)
         {
-            var expected = plan.PlannedPrizeLevels[objective.Id];
-            var actual = result.PrizeLevels[objective.Id];
-            if (actual != expected)
-            {
-                issues.Add(new VerificationIssue(
-                    VerificationSeverity.Error,
-                    "prize_level_mismatch",
-                    $"Objective '{objective.Id}' expected prize level {expected}, replay produced {actual}."));
-            }
-        }
-    }
-
-    private static void VerifyPayout(GamePlan plan, SimulationResult result, ICollection<VerificationIssue> issues)
-    {
-        if (result.FinalPayout != plan.TargetWin)
-        {
-            issues.Add(new VerificationIssue(
-                VerificationSeverity.Error,
-                "payout_mismatch",
-                $"Target win {plan.TargetWin}, replay payout {result.FinalPayout}."));
+            _trace.WriteBoard(title, board);
         }
     }
 }

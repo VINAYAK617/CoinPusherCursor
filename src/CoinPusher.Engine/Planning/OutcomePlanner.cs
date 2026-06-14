@@ -1,251 +1,38 @@
 namespace CoinPusher.Engine;
 
-public enum ContributionSource
-{
-    Normal,
-    Wheel,
-    Flush
-}
-
-public sealed record ContributionUnit(string ObjectiveId, int Amount, ContributionSource Source);
-
-public sealed record ObjectiveContributionAllocation(string ObjectiveId, int Normal, int Wheel, int Flush)
-{
-    public int Total => Normal + Wheel + Flush;
-}
-
-public sealed record ContributionPlan(
-    IReadOnlyList<ObjectiveContributionAllocation> Allocations,
-    IReadOnlyList<ContributionUnit> Units);
-
-public sealed record FeasibilityReport(
-    bool IsFeasible,
-    int RequiredContributionCells,
-    int RequiredSpins,
-    int AvailableInitialSpins,
-    string? Reason);
-
-public sealed record TimelineSpinContributions(int SpinIndex, IReadOnlyList<ContributionUnit> Contributions);
-
-public sealed record TimelinePlan(
-    int SpinCount,
-    int ExtraSpinsRequired,
-    IReadOnlyList<TimelineSpinContributions> Spins);
-
-public sealed record PlannedCollectionBatch(BoardState Board, IReadOnlyList<int> PushValues);
-
-public sealed class OutcomeSolver
-{
-    public IReadOnlyList<ObjectiveRequirement> Solve(OutcomeRequest request)
-    {
-        ArgumentNullException.ThrowIfNull(request);
-        if (request.Objectives.Count == 0)
-        {
-            throw new PlanningException("At least one objective is required.");
-        }
-
-        return request.Objectives;
-    }
-}
-
-public sealed class PrizePlanner
-{
-    public IReadOnlyDictionary<string, PrizeLevel> Solve(OutcomeRequest request)
-    {
-        ArgumentNullException.ThrowIfNull(request);
-
-        var objectives = request.Objectives.ToArray();
-        var selected = new PrizeLevel[objectives.Length];
-        var levelOrder = request.StyleProfile.PreferUpgradedPrizes
-            ? new[] { PrizeLevel.Upgrade2, PrizeLevel.Upgrade1, PrizeLevel.Base }
-            : new[] { PrizeLevel.Base, PrizeLevel.Upgrade1, PrizeLevel.Upgrade2 };
-
-        if (!Search(0, 0))
-        {
-            throw new PlanningException("No exact prize-level combination can realize the requested target win.");
-        }
-
-        return objectives
-            .Select((objective, index) => new KeyValuePair<string, PrizeLevel>(objective.Id, selected[index]))
-            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
-
-        bool Search(int objectiveIndex, int payout)
-        {
-            if (payout > request.TargetWin)
-            {
-                return false;
-            }
-
-            if (objectiveIndex == objectives.Length)
-            {
-                return payout == request.TargetWin;
-            }
-
-            var objective = objectives[objectiveIndex];
-            var paytableEntry = request.Paytable.GetEntry(objective.Id);
-            foreach (var level in levelOrder)
-            {
-                selected[objectiveIndex] = level;
-                if (Search(objectiveIndex + 1, payout + paytableEntry.GetValue(level)))
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-    }
-}
-
-public sealed class ContributionPlanner
-{
-    public ContributionPlan Plan(IReadOnlyList<ObjectiveRequirement> objectives)
-    {
-        ArgumentNullException.ThrowIfNull(objectives);
-
-        var allocations = new List<ObjectiveContributionAllocation>();
-        var units = new List<ContributionUnit>();
-
-        foreach (var objective in objectives)
-        {
-            allocations.Add(new ObjectiveContributionAllocation(objective.Id, objective.TargetCount, 0, 0));
-
-            var remaining = objective.TargetCount;
-            while (remaining > 0)
-            {
-                var amount = Math.Min(EngineConstants.MaximumStackSize, remaining);
-                units.Add(new ContributionUnit(objective.Id, amount, ContributionSource.Normal));
-                remaining -= amount;
-            }
-        }
-
-        return new ContributionPlan(allocations, units);
-    }
-}
-
-public sealed class FeasibilitySolver
-{
-    public FeasibilityReport Evaluate(ContributionPlan contributionPlan, FeatureConfiguration featureConfiguration)
-    {
-        ArgumentNullException.ThrowIfNull(contributionPlan);
-        ArgumentNullException.ThrowIfNull(featureConfiguration);
-
-        featureConfiguration.Validate();
-
-        var requiredCells = contributionPlan.Units.Count;
-        var cellsPerSpin = EngineConstants.BoardColumns * EngineConstants.MaximumPushValue;
-        var requiredSpins = Math.Max(1, (int)Math.Ceiling(requiredCells / (double)cellsPerSpin));
-        var isFeasible = requiredSpins >= 1;
-        var reason = isFeasible ? null : "Contribution plan cannot be represented by valid pusher values.";
-
-        return new FeasibilityReport(
-            isFeasible,
-            requiredCells,
-            requiredSpins,
-            featureConfiguration.InitialSpinCount,
-            reason);
-    }
-}
-
-public sealed class TimelinePlanner
-{
-    public TimelinePlan Plan(ContributionPlan contributionPlan, FeatureConfiguration featureConfiguration)
-    {
-        ArgumentNullException.ThrowIfNull(contributionPlan);
-        ArgumentNullException.ThrowIfNull(featureConfiguration);
-
-        var cellsPerSpin = EngineConstants.BoardColumns * EngineConstants.MaximumPushValue;
-        var requiredSpins = Math.Max(1, (int)Math.Ceiling(contributionPlan.Units.Count / (double)cellsPerSpin));
-        var spinCount = Math.Max(featureConfiguration.InitialSpinCount, requiredSpins);
-        var spins = Enumerable
-            .Range(0, spinCount)
-            .Select(spinIndex => new List<ContributionUnit>())
-            .ToArray();
-
-        for (var index = 0; index < contributionPlan.Units.Count; index++)
-        {
-            spins[index % spinCount].Add(contributionPlan.Units[index]);
-        }
-
-        if (spins.Any(spin => spin.Count > cellsPerSpin))
-        {
-            throw new PlanningException("Timeline planner produced a spin that exceeds pusher collection capacity.");
-        }
-
-        return new TimelinePlan(
-            spinCount,
-            Math.Max(0, spinCount - featureConfiguration.InitialSpinCount),
-            spins.Select((spin, index) => new TimelineSpinContributions(index, spin)).ToArray());
-    }
-}
-
-public sealed class BackwardBoardPlanner
-{
-    public IReadOnlyList<PlannedCollectionBatch> Build(TimelinePlan timelinePlan)
-    {
-        ArgumentNullException.ThrowIfNull(timelinePlan);
-
-        var batches = new List<PlannedCollectionBatch>(timelinePlan.Spins.Count);
-        foreach (var spin in timelinePlan.Spins)
-        {
-            var board = BoardState.Empty();
-            var perColumnCounts = new int[EngineConstants.BoardColumns];
-
-            for (var index = 0; index < spin.Contributions.Count; index++)
-            {
-                var contribution = spin.Contributions[index];
-                var column = index % EngineConstants.BoardColumns;
-                var depth = index / EngineConstants.BoardColumns;
-                if (depth >= EngineConstants.MaximumPushValue)
-                {
-                    throw new PlanningException($"Spin {spin.SpinIndex} has more contributions than pushers can collect.");
-                }
-
-                var row = EngineConstants.BoardRows - 1 - depth;
-                board.Set(new BoardPosition(row, column), BoardCell.FromSymbol(contribution.ObjectiveId, contribution.Amount));
-                perColumnCounts[column]++;
-            }
-
-            var pushValues = perColumnCounts
-                .Select(count => Math.Max(EngineConstants.MinimumPushValue, count))
-                .ToArray();
-            batches.Add(new PlannedCollectionBatch(board, pushValues));
-        }
-
-        return batches;
-    }
-}
-
-public sealed class OutcomePlanner
+public sealed class OutcomePlanner : IOutcomePlanner
 {
     private const string EngineVersion = "1.0.0";
-    private readonly CoinPusherSimulator _simulator;
-    private readonly GamePlanVerifier _verifier;
-    private readonly OutcomeSolver _outcomeSolver;
-    private readonly PrizePlanner _prizePlanner;
-    private readonly ContributionPlanner _contributionPlanner;
-    private readonly FeasibilitySolver _feasibilitySolver;
-    private readonly TimelinePlanner _timelinePlanner;
-    private readonly BackwardBoardPlanner _backwardBoardPlanner;
+    private readonly IGameSimulator _simulator;
+    private readonly IGamePlanVerifier _verifier;
+    private readonly IOutcomeSolver _outcomeSolver;
+    private readonly IPrizePlanner _prizePlanner;
+    private readonly IContributionPlanner _contributionPlanner;
+    private readonly IFeasibilitySolver _feasibilitySolver;
+    private readonly ITimelinePlanner _timelinePlanner;
+    private readonly IBackwardBoardPlanner _backwardBoardPlanner;
+    private readonly IEngineTraceSink _trace;
 
     public OutcomePlanner(
-        CoinPusherSimulator? simulator = null,
-        GamePlanVerifier? verifier = null,
-        OutcomeSolver? outcomeSolver = null,
-        PrizePlanner? prizePlanner = null,
-        ContributionPlanner? contributionPlanner = null,
-        FeasibilitySolver? feasibilitySolver = null,
-        TimelinePlanner? timelinePlanner = null,
-        BackwardBoardPlanner? backwardBoardPlanner = null)
+        IGameSimulator? simulator = null,
+        IGamePlanVerifier? verifier = null,
+        IOutcomeSolver? outcomeSolver = null,
+        IPrizePlanner? prizePlanner = null,
+        IContributionPlanner? contributionPlanner = null,
+        IFeasibilitySolver? feasibilitySolver = null,
+        ITimelinePlanner? timelinePlanner = null,
+        IBackwardBoardPlanner? backwardBoardPlanner = null,
+        IEngineTraceSink? trace = null)
     {
-        _simulator = simulator ?? new CoinPusherSimulator();
+        _trace = trace ?? NullEngineTraceSink.Instance;
+        _simulator = simulator ?? new CoinPusherSimulator(_trace);
         _verifier = verifier ?? new GamePlanVerifier(_simulator);
         _outcomeSolver = outcomeSolver ?? new OutcomeSolver();
         _prizePlanner = prizePlanner ?? new PrizePlanner();
         _contributionPlanner = contributionPlanner ?? new ContributionPlanner();
         _feasibilitySolver = feasibilitySolver ?? new FeasibilitySolver();
         _timelinePlanner = timelinePlanner ?? new TimelinePlanner();
-        _backwardBoardPlanner = backwardBoardPlanner ?? new BackwardBoardPlanner();
+        _backwardBoardPlanner = backwardBoardPlanner ?? new BackwardBoardPlanner(_trace);
     }
 
     public GamePlan Generate(OutcomeRequest request)
@@ -253,18 +40,27 @@ public sealed class OutcomePlanner
         ArgumentNullException.ThrowIfNull(request);
         ValidateRequest(request);
 
+        Trace($"[planner] Target win: {request.TargetWin}");
         var objectives = _outcomeSolver.Solve(request);
+        Trace($"[planner] Objectives: {string.Join(", ", objectives.Select(objective => $"{objective.Id}={objective.TargetCount}"))}");
+
         var plannedPrizeLevels = _prizePlanner.Solve(request);
+        Trace($"[planner] Prize levels: {BoardFormatter.FormatPrizeLevels(plannedPrizeLevels)}");
+
         var contributionPlan = _contributionPlanner.Plan(objectives);
+        Trace($"[planner] Contribution units: {contributionPlan.Units.Count}");
+
         var feasibility = _feasibilitySolver.Evaluate(contributionPlan, request.FeatureConfiguration);
+        Trace($"[planner] Feasibility: requiredCells={feasibility.RequiredContributionCells}, requiredSpins={feasibility.RequiredSpins}, initialSpins={feasibility.AvailableInitialSpins}");
         if (!feasibility.IsFeasible)
         {
             throw new PlanningException(feasibility.Reason ?? "Requested outcome is not feasible.");
         }
 
         var timelinePlan = _timelinePlanner.Plan(contributionPlan, request.FeatureConfiguration);
-        var collectionBatches = _backwardBoardPlanner.Build(timelinePlan);
+        Trace($"[planner] Timeline: spins={timelinePlan.SpinCount}, extraSpins={timelinePlan.ExtraSpinsRequired}");
 
+        var collectionBatches = _backwardBoardPlanner.Build(timelinePlan);
         var spinBuilders = new List<SpinPlanBuilder>(timelinePlan.SpinCount);
         for (var spinIndex = 0; spinIndex < timelinePlan.SpinCount; spinIndex++)
         {
@@ -276,6 +72,8 @@ public sealed class OutcomePlanner
         ScheduleSpawns(collectionBatches, spinBuilders);
 
         var initialBoard = collectionBatches.Count > 0 ? collectionBatches[0].Board.Clone() : BoardState.Empty();
+        TraceBoard("initial board before replay", initialBoard);
+
         var planWithoutSnapshots = CreatePlan(request, plannedPrizeLevels, initialBoard, spinBuilders, Array.Empty<BoardState>());
         var simulation = _simulator.Replay(planWithoutSnapshots);
         var plan = CreatePlan(request, plannedPrizeLevels, initialBoard, spinBuilders, simulation.BoardTimeline);
@@ -287,6 +85,7 @@ public sealed class OutcomePlanner
             throw new PlanningException($"Generated plan failed verification: {detail}");
         }
 
+        Trace("[planner] Verification passed. Generated plan is deterministic and exact.");
         return plan;
     }
 
@@ -431,6 +230,22 @@ public sealed class OutcomePlanner
 
     private static int[] DefaultPushValues() =>
         Enumerable.Repeat(EngineConstants.MinimumPushValue, EngineConstants.BoardColumns).ToArray();
+
+    private void Trace(string message)
+    {
+        if (_trace.IsEnabled)
+        {
+            _trace.Write(message);
+        }
+    }
+
+    private void TraceBoard(string title, BoardState board)
+    {
+        if (_trace.IsEnabled)
+        {
+            _trace.WriteBoard(title, board);
+        }
+    }
 
     private sealed class SpinPlanBuilder
     {
