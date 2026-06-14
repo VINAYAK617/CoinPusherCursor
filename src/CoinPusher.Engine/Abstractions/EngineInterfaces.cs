@@ -30,6 +30,11 @@ public interface IBackwardBoardPlanner
     IReadOnlyList<PlannedCollectionBatch> Build(TimelinePlan timelinePlan);
 }
 
+public interface IFillerSymbolProvider
+{
+    BoardCell CreateFillerCell(int spinIndex, BoardPosition position);
+}
+
 public interface IOutcomePlanner
 {
     GamePlan Generate(OutcomeRequest request);

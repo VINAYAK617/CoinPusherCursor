@@ -65,6 +65,7 @@ public sealed class CoinPusherSimulator : IGameSimulator
             ApplyFeatureConversions(board, spin);
             TraceBoard($"spin {spinIndex} after feature conversion", board);
 
+            Trace($"[spin {spinIndex}] target harvest: {FormatProjectedHarvest(board, spin, targetCounts)}");
             ApplyPushes(board, spin, collectionCounts, targetCounts, spinCollections);
             Trace($"[spin {spinIndex}] collections: {FormatCollections(spinCollections)}");
             Trace($"[spin {spinIndex}] counts: {BoardFormatter.FormatCounts(collectionCounts)}");
@@ -132,9 +133,12 @@ public sealed class CoinPusherSimulator : IGameSimulator
     {
         foreach (var landing in spin.FeatureLandings)
         {
-            if (board.Get(landing.Position).Kind != CellKind.Empty)
+            var currentCell = board.Get(landing.Position);
+            var canLand = currentCell.Kind == CellKind.Empty
+                || (currentCell.Kind == CellKind.Symbol && !currentCell.Symbol!.ContributesToObjective);
+            if (!canLand)
             {
-                throw new SimulationException($"Feature landing at {landing.Position} would overwrite an occupied cell.");
+                throw new SimulationException($"Feature landing at {landing.Position} can only replace empty or filler cells.");
             }
 
             if (landing.Feature.ChainDepth > EngineConstants.MaximumFeatureChainDepth)
@@ -419,6 +423,32 @@ public sealed class CoinPusherSimulator : IGameSimulator
         }
 
         return string.Join(", ", collections.Select(collection => $"{collection.ObjectiveId}+={collection.Amount} ({collection.Source} {collection.Position})"));
+    }
+
+    private static string FormatProjectedHarvest(
+        BoardState board,
+        SpinPlan spin,
+        IReadOnlyDictionary<string, int> targetCounts)
+    {
+        var projected = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (var column = 0; column < EngineConstants.BoardColumns; column++)
+        {
+            var pushValue = spin.PushValues[column];
+            for (var row = EngineConstants.BoardRows - pushValue; row < EngineConstants.BoardRows; row++)
+            {
+                var cell = board.Get(new BoardPosition(row, column));
+                if (cell.Kind != CellKind.Symbol || !cell.Symbol!.ContributesToObjective || !targetCounts.ContainsKey(cell.Symbol.SymbolId))
+                {
+                    continue;
+                }
+
+                projected[cell.Symbol.SymbolId] = projected.TryGetValue(cell.Symbol.SymbolId, out var current)
+                    ? current + cell.Symbol.StackSize
+                    : cell.Symbol.StackSize;
+            }
+        }
+
+        return projected.Count == 0 ? "none" : BoardFormatter.FormatCounts(projected);
     }
 
     private void Trace(string message)

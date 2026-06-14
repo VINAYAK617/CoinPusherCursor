@@ -10,6 +10,7 @@ var tests = new (string Name, Action Run)[]
 {
     ("planner creates exact verified outcome", PlannerCreatesExactVerifiedOutcome),
     ("planner uses clockwise rotation and paced timeline", PlannerUsesClockwiseRotationAndPacedTimeline),
+    ("backward reconstruction produces continuous boards", BackwardReconstructionProducesContinuousBoards),
     ("timeline planner requests extra spin capacity", TimelinePlannerRequestsExtraSpinCapacity),
     ("console trace prints board formation and spin states", ConsoleTracePrintsBoardFormationAndSpinStates),
     ("wheel uses documented stack increment formula", WheelUsesDocumentedStackIncrementFormula),
@@ -93,6 +94,43 @@ static void PlannerUsesClockwiseRotationAndPacedTimeline()
     Assert.Equal(5, report.SimulationResult!.Spins.Count(spin => spin.Collections.Count > 0));
 }
 
+static void BackwardReconstructionProducesContinuousBoards()
+{
+    var request = OutcomeRequest.Create(
+        100,
+        new[]
+        {
+            new ObjectiveRequirement("A", 30),
+            new ObjectiveRequirement("B", 30),
+            new ObjectiveRequirement("C", 20),
+            new ObjectiveRequirement("D", 15)
+        },
+        new PaytableConfiguration(new Dictionary<string, PrizeTableEntry>
+        {
+            ["A"] = new(25, 25, 25),
+            ["B"] = new(25, 25, 25),
+            ["C"] = new(25, 25, 25),
+            ["D"] = new(25, 25, 25)
+        }));
+
+    var plan = new OutcomePlanner().Generate(request);
+    var report = new GamePlanVerifier().Verify(plan);
+
+    Assert.True(report.IsValid, string.Join("; ", report.Issues.Select(issue => issue.Message)));
+    Assert.True(plan.Spins.Any(spin => spin.Spawns.Count > 0), "Backward reconstruction should produce explicit spawns.");
+    Assert.True(plan.BoardStates.Count == plan.Spins.Count + 1, "Every spin should have start and end snapshots.");
+
+    for (var spinIndex = 0; spinIndex < plan.Spins.Count; spinIndex++)
+    {
+        Assert.True(
+            report.SimulationResult!.BoardTimeline[spinIndex].ValueEquals(plan.BoardStates[spinIndex]),
+            $"Spin {spinIndex} start snapshot should match replay.");
+        Assert.True(
+            report.SimulationResult.BoardTimeline[spinIndex + 1].ValueEquals(plan.BoardStates[spinIndex + 1]),
+            $"Spin {spinIndex} end snapshot should match replay.");
+    }
+}
+
 static void TimelinePlannerRequestsExtraSpinCapacity()
 {
     var objectives = new[] { new ObjectiveRequirement("A", 600) };
@@ -122,9 +160,10 @@ static void ConsoleTracePrintsBoardFormationAndSpinStates()
     }
 
     var output = writer.ToString();
-    Assert.Contains(output, "[board-planner] Building");
+    Assert.Contains(output, "[board-planner] Backward reconstructing");
     Assert.Contains(output, "=== planned start board for spin 0 ===");
     Assert.Contains(output, "=== spin 0 start ===");
+    Assert.Contains(output, "target harvest:");
     Assert.Contains(output, "=== spin 0 after rotation ===");
     Assert.Contains(output, "[simulator] Replay end.");
 }

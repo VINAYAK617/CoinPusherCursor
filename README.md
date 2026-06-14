@@ -22,7 +22,13 @@ coin-pusher sessions.
 - Extra-spin awards
 - Feature-chain validation
 - Deterministic board snapshots for replay verification
-- First-pass exact planner that distributes contribution values across a paced spin timeline
+- Backward reconstruction planner:
+  - seeds a final non-winning filler board
+  - removes planned spawns
+  - rotates anti-clockwise to undo forward rotation
+  - restores exact collection symbols into bottom rows
+  - emits forward spawn instructions for deterministic replay
+- Exact planner that distributes contribution values across a paced spin timeline
 
 ## Projects
 
@@ -54,6 +60,23 @@ The implementation exposes the major TDD pipeline stages as separate C# types:
 `OutcomePlanner` composes those modules and verifies the generated plan before
 returning it. The generated `GamePlan` remains the source of truth; board states
 are deterministic snapshots used to prove replay correctness.
+
+## Backward board reconstruction
+
+Forward runtime executes:
+
+```text
+Start board -> collect -> rotate clockwise -> spawn -> next board
+```
+
+The planner builds the same sequence in reverse:
+
+```text
+Later board -> remove spawns -> rotate anti-clockwise -> restore collected rows -> previous board
+```
+
+This lets the engine print and replay the game in normal spin order while the
+board generation works from the end of the timeline back to spin 1.
 
 ## Usage sketch
 

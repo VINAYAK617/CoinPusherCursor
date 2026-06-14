@@ -64,14 +64,15 @@ public sealed class OutcomePlanner : IOutcomePlanner
         var spinBuilders = new List<SpinPlanBuilder>(timelinePlan.SpinCount);
         for (var spinIndex = 0; spinIndex < timelinePlan.SpinCount; spinIndex++)
         {
-            var batch = spinIndex < collectionBatches.Count ? collectionBatches[spinIndex] : new PlannedCollectionBatch(BoardState.Empty(), DefaultPushValues());
-            spinBuilders.Add(new SpinPlanBuilder(spinIndex, batch.Board, batch.PushValues));
+            var batch = spinIndex < collectionBatches.Count
+                ? collectionBatches[spinIndex]
+                : new PlannedCollectionBatch(BoardState.Empty(), DefaultPushValues(), Array.Empty<SpawnInstruction>());
+            spinBuilders.Add(new SpinPlanBuilder(spinIndex, batch.Board, batch.PushValues, batch.Spawns));
         }
 
         SchedulePrizeAndSpinFeatures(request, plannedPrizeLevels, timelinePlan.ExtraSpinsRequired, spinBuilders);
-        ScheduleSpawns(collectionBatches, spinBuilders);
 
-        var initialBoard = collectionBatches.Count > 0 ? collectionBatches[0].Board.Clone() : BoardState.Empty();
+        var initialBoard = spinBuilders.Count > 0 ? spinBuilders[0].StartBoard.Clone() : BoardState.Empty();
         TraceBoard("initial board before replay", initialBoard);
 
         var planWithoutSnapshots = CreatePlan(request, plannedPrizeLevels, initialBoard, spinBuilders, Array.Empty<BoardState>());
@@ -150,7 +151,7 @@ public sealed class OutcomePlanner : IOutcomePlanner
     {
         foreach (var builder in spinBuilders)
         {
-            foreach (var position in FindFeatureLandingSlots(builder.StartBoard))
+            foreach (var position in FindFeatureLandingSlots(builder.StartBoard, builder.PushValues))
             {
                 if (builder.ReservedFeaturePositions.Contains(position))
                 {
@@ -168,35 +169,18 @@ public sealed class OutcomePlanner : IOutcomePlanner
         return false;
     }
 
-    private static IEnumerable<BoardPosition> FindFeatureLandingSlots(BoardState board)
+    private static IEnumerable<BoardPosition> FindFeatureLandingSlots(BoardState board, IReadOnlyList<int> pushValues)
     {
-        for (var row = 0; row < EngineConstants.BoardRows; row++)
+        for (var column = 0; column < EngineConstants.BoardColumns; column++)
         {
-            for (var column = 0; column < EngineConstants.BoardColumns; column++)
+            var firstCollectedRow = EngineConstants.BoardRows - pushValues[column];
+            for (var row = firstCollectedRow; row < EngineConstants.BoardRows; row++)
             {
                 var position = new BoardPosition(row, column);
-                if (board.Get(position).Kind == CellKind.Empty)
+                var cell = board.Get(position);
+                if (cell.Kind == CellKind.Empty || (cell.Kind == CellKind.Symbol && !cell.Symbol!.ContributesToObjective))
                 {
                     yield return position;
-                }
-            }
-        }
-    }
-
-    private static void ScheduleSpawns(IReadOnlyList<PlannedCollectionBatch> collectionBatches, IReadOnlyList<SpinPlanBuilder> spinBuilders)
-    {
-        for (var spinIndex = 0; spinIndex < spinBuilders.Count - 1; spinIndex++)
-        {
-            if (spinIndex + 1 >= collectionBatches.Count)
-            {
-                continue;
-            }
-
-            foreach (var (position, cell) in collectionBatches[spinIndex + 1].Board.Cells())
-            {
-                if (cell.Kind != CellKind.Empty)
-                {
-                    spinBuilders[spinIndex].Spawns.Add(new SpawnInstruction(position, cell));
                 }
             }
         }
@@ -249,11 +233,16 @@ public sealed class OutcomePlanner : IOutcomePlanner
 
     private sealed class SpinPlanBuilder
     {
-        public SpinPlanBuilder(int spinIndex, BoardState startBoard, IReadOnlyList<int> pushValues)
+        public SpinPlanBuilder(
+            int spinIndex,
+            BoardState startBoard,
+            IReadOnlyList<int> pushValues,
+            IReadOnlyList<SpawnInstruction> spawns)
         {
             SpinIndex = spinIndex;
             StartBoard = startBoard.Clone();
             PushValues = pushValues.ToArray();
+            Spawns.AddRange(spawns);
         }
 
         public int SpinIndex { get; }

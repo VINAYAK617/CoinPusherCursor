@@ -32,4 +32,7 @@ public sealed record TimelinePlan(
     int ExtraSpinsRequired,
     IReadOnlyList<TimelineSpinContributions> Spins);
 
-public sealed record PlannedCollectionBatch(BoardState Board, IReadOnlyList<int> PushValues);
+public sealed record PlannedCollectionBatch(
+    BoardState Board,
+    IReadOnlyList<int> PushValues,
+    IReadOnlyList<SpawnInstruction> Spawns);
