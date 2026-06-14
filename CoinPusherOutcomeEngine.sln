@@ -1,0 +1,24 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "CoinPusher.Engine", "src\CoinPusher.Engine\CoinPusher.Engine.csproj", "{4C2E8A49-7259-4C44-9C28-B597F3E37B29}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "CoinPusher.Engine.Tests", "tests\CoinPusher.Engine.Tests\CoinPusher.Engine.Tests.csproj", "{6AA4A7C5-7B79-470A-9759-9569482E0BAE}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{4C2E8A49-7259-4C44-9C28-B597F3E37B29}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4C2E8A49-7259-4C44-9C28-B597F3E37B29}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4C2E8A49-7259-4C44-9C28-B597F3E37B29}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4C2E8A49-7259-4C44-9C28-B597F3E37B29}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6AA4A7C5-7B79-470A-9759-9569482E0BAE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6AA4A7C5-7B79-470A-9759-9569482E0BAE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6AA4A7C5-7B79-470A-9759-9569482E0BAE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6AA4A7C5-7B79-470A-9759-9569482E0BAE}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal
