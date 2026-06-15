@@ -212,7 +212,7 @@ public sealed record CellState
             ? Normal(ConvertSymId!.Value)
             : this;
 
-    public CellState WithStack(int stackCount) => this with { StackCount = stackCount };
+    public CellState WithStack(int stackCount) => new(SymId, stackCount, IsFeature, FeatureId, ConvertSymId, FParams);
 }
 
 public sealed record PusherPlan(int PushValue, string? FeatureId = null)
@@ -1035,7 +1035,7 @@ public sealed class CoinPusherV23Planner
             .ToArray();
     }
 
-    private static int PickWheelSymbol(NormalizedMathInput input, IReadOnlyDictionary<int, int> remaining)
+    private static int PickWheelSymbol(NormalizedMathInput input, IDictionary<int, int> remaining)
     {
         var excludedToSyms = input.PrizeUpgradeMap.Values.ToHashSet();
         foreach (var symId in input.WheelSymbolOrder)
