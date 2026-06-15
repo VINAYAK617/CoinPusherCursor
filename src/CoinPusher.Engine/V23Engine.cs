@@ -797,7 +797,7 @@ public sealed class CoinPusherV23Planner
             {
                 var nextPushers = BuildPushers(turnIndex + 1, featureQueue);
                 var reserved = featureQueue
-                    .Where(feature => feature.SpawnTurn == turnIndex)
+                    .Where(feature => feature.SpawnTurn == turnIndex && feature.Kind != CoinPusherV23Constants.Flush)
                     .Select(feature => feature.Kind)
                     .ToArray();
 
