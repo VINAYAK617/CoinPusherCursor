@@ -498,7 +498,8 @@ public sealed class CoinPusherTicketReplayEngine
             return;
         }
 
-        var nextFillerCount = fillerCounts.GetValueOrDefault(cell.Id) + cell.StackValue;
+        fillerCounts.TryGetValue(cell.Id, out var currentFillerCount);
+        var nextFillerCount = currentFillerCount + cell.StackValue;
         if (nextFillerCount >= TicketSymbolIds.FillerCollectionCap)
         {
             throw new SimulationException($"Filler symbol {cell.Id} reached the collection cap of {TicketSymbolIds.FillerCollectionCap}.");
