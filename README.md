@@ -6,6 +6,19 @@ coin-pusher sessions.
 ## What is implemented
 
 - 5x5 board model with symbol stacks and feature cells
+- GDD-compatible ticket replay for `startingBoard`, `winInfo`, and ordered
+  turn `pushers`/`spawns`
+- Fixed five-phase ticket runtime:
+  1. stale feature-token flattening
+  2. pusher/FLUSH collection
+  3. clockwise board rotation
+  4. ordered spawn injection into post-rotation empty positions
+  5. board-token feature firing and conversion
+- WHEEL token multiplication with next-turn zone isolation
+- EXTRA SPIN and PRIZE UPGRADE token conversion as predetermined visual
+  events
+- FLUSH pushers via `featureId=13`
+- Exact ticket verification for declared win-symbol targets and filler caps
 - Spin lifecycle:
   1. feature landing
   2. feature activation

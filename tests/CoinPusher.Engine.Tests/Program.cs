@@ -5,7 +5,10 @@ var tests = new (string Name, Action Run)[]
     ("planner creates exact verified outcome", PlannerCreatesExactVerifiedOutcome),
     ("wheel caps stacks and harvests potential", WheelCapsStacksAndHarvestsPotential),
     ("verifier rejects over collection", VerifierRejectsOverCollection),
-    ("verifier rejects invalid feature chain", VerifierRejectsInvalidFeatureChain)
+    ("verifier rejects invalid feature chain", VerifierRejectsInvalidFeatureChain),
+    ("ticket replay follows GDD pusher rotation spawn pipeline", TicketReplayFollowsGddPipeline),
+    ("ticket replay fires wheel and isolates next zone", TicketReplayFiresWheelAndIsolatesNextZone),
+    ("ticket verifier rejects filler cap", TicketVerifierRejectsFillerCap)
 };
 
 var failures = new List<string>();
@@ -131,6 +134,87 @@ static void VerifierRejectsInvalidFeatureChain()
     Assert.Contains(report.Issues, issue => issue.Code == "replay_failed" && issue.Message.Contains("Invalid feature chain", StringComparison.Ordinal));
 }
 
+static void TicketReplayFollowsGddPipeline()
+{
+    var ticket = new CoinPusherTicket(
+        Board(
+            new[] { 2, 3, 4, 5, 6 },
+            new[] { 3, 4, 5, 6, 7 },
+            new[] { 4, 5, 6, 7, 8 },
+            new[] { 5, 6, 7, 8, 9 },
+            new[] { 1, 1, 2, 3, 4 }),
+        new TicketWinInfo(1, new[] { new TicketWinSymbol(1, 2) }, Array.Empty<TicketPrizeTier>()),
+        new[]
+        {
+            new TicketTurn(Pushers(1), Cells(2, 3, 4, 5, 6))
+        });
+
+    var report = new CoinPusherTicketVerifier().Verify(ticket);
+
+    Assert.True(report.IsValid, string.Join("; ", report.Issues.Select(issue => issue.Message)));
+    Assert.Equal(2, report.ReplayResult!.WinSymbolCounts[1]);
+    Assert.Equal(5, report.ReplayResult.Turns[0].Collections.Count);
+    Assert.True(report.ReplayResult.Turns[0].AfterRotation.Get(new BoardPosition(0, 4)) is null, "Rotation should move the pushed-away nulls to the rightmost column.");
+    Assert.Equal(2, report.ReplayResult.Turns[0].EndBoard.Get(new BoardPosition(0, 4))!.Id);
+    Assert.True(report.ReplayResult.BoardTimeline.Count == 2, "Replay should include initial and final board snapshots.");
+}
+
+static void TicketReplayFiresWheelAndIsolatesNextZone()
+{
+    var wheel = new TicketCell(
+        TicketSymbolIds.Wheel,
+        feature: new TicketFeature(
+            TicketSymbolIds.Wheel,
+            convertToId: 2,
+            wheelSymbolId: 1,
+            wheelStackMultiplier: 4));
+    var ticket = new CoinPusherTicket(
+        Board(
+            new[] { 2, 3, 4, 5, 6 },
+            new[] { 3, 4, 5, 6, 7 },
+            new[] { 4, 5, 6, 7, 8 },
+            new[] { 5, 6, 7, 8, 9 },
+            new[] { 6, 7, 8, 9, 10 }),
+        new TicketWinInfo(2, new[] { new TicketWinSymbol(1, 4) }, Array.Empty<TicketPrizeTier>()),
+        new[]
+        {
+            new TicketTurn(Pushers(1), new[] { new TicketCell(2), new TicketCell(3), new TicketCell(4), wheel, new TicketCell(1) }),
+            new TicketTurn(Pushers(1), Cells(2, 3, 4, 5, 6))
+        });
+
+    var report = new CoinPusherTicketVerifier().Verify(ticket);
+
+    Assert.True(report.IsValid, string.Join("; ", report.Issues.Select(issue => issue.Message)));
+    Assert.Equal(4, report.ReplayResult!.WinSymbolCounts[1]);
+    Assert.Equal(1, report.ReplayResult.Turns[0].FiredFeatures.Count);
+    Assert.Equal(2, report.ReplayResult.Turns[0].EndBoard.Get(new BoardPosition(3, 4))!.Id);
+    Assert.Equal(4, report.ReplayResult.Turns[0].EndBoard.Get(new BoardPosition(4, 4))!.StackValue);
+}
+
+static void TicketVerifierRejectsFillerCap()
+{
+    var ticket = new CoinPusherTicket(
+        Board(
+            new[] { 2, 2, 2, 2, 2 },
+            new[] { 2, 2, 2, 2, 2 },
+            new[] { 2, 2, 2, 2, 2 },
+            new[] { 2, 2, 2, 2, 2 },
+            new[] { 2, 2, 2, 2, 2 }),
+        new TicketWinInfo(4, new[] { new TicketWinSymbol(1, 0) }, Array.Empty<TicketPrizeTier>()),
+        new[]
+        {
+            new TicketTurn(Pushers(1), Cells(2, 2, 2, 2, 2)),
+            new TicketTurn(Pushers(1), Cells(2, 2, 2, 2, 2)),
+            new TicketTurn(Pushers(1), Cells(2, 2, 2, 2, 2)),
+            new TicketTurn(Pushers(1), Cells(2, 2, 2, 2, 2))
+        });
+
+    var report = new CoinPusherTicketVerifier().Verify(ticket);
+
+    Assert.False(report.IsValid, "Filler collection cap should invalidate the ticket.");
+    Assert.Contains(report.Issues, issue => issue.Code == "ticket_replay_failed" && issue.Message.Contains("collection cap", StringComparison.Ordinal));
+}
+
 static GamePlan SingleObjectivePlan(int targetCount, int targetWin, BoardState initialBoard, SpinPlan spin) =>
     new(
         targetWin,
@@ -142,6 +226,15 @@ static GamePlan SingleObjectivePlan(int targetCount, int targetWin, BoardState i
         new[] { spin },
         Array.Empty<BoardState>(),
         new VerificationMetadata("test", 5, "test", DateTimeOffset.UnixEpoch));
+
+static IReadOnlyList<IReadOnlyList<TicketCell>> Board(params int[][] rows) =>
+    rows.Select(row => (IReadOnlyList<TicketCell>)row.Select(id => new TicketCell(id)).ToArray()).ToArray();
+
+static IReadOnlyList<TicketPusher> Pushers(int pushValue) =>
+    Enumerable.Repeat(new TicketPusher(pushValue), EngineConstants.BoardColumns).ToArray();
+
+static IReadOnlyList<TicketCell> Cells(params int[] ids) =>
+    ids.Select(id => new TicketCell(id)).ToArray();
 
 static class Assert
 {
