@@ -10,7 +10,12 @@ internal static class StressTest
     {
         static (int ok, string err) Try(MathInput cfg, int seed)
         {
-            try { new Planner(cfg, seed).Plan(); return (1, ""); }
+            try
+            {
+                var plan = new Planner(cfg, seed).Plan();
+                SerializedTicketVerifier.CheckNoMissingCells(TicketSerializer.ToTicketObject(plan));
+                return (1, "");
+            }
             catch (Exception ex) { return (0, ex.Message[..Math.Min(120, ex.Message.Length)]); }
         }
 
@@ -90,5 +95,61 @@ internal static class StressTest
 
         Console.WriteLine($"\nTotal: {totalFound}/{totalTrials} trials succeeded ({100.0 * totalFound / totalTrials:F2}%)");
         Console.WriteLine(totalFound == totalTrials ? "ALL PASS" : $"FAILURES: {totalTrials - totalFound}");
+    }
+}
+
+internal static class SerializedTicketVerifier
+{
+    internal static void CheckNoMissingCells(TicketSerializer.TicketDto dto)
+    {
+        var board = new int?[K.ROWS, K.COLS];
+        for (int r = 0; r < K.ROWS; r++)
+        for (int c = 0; c < K.COLS; c++)
+            board[r, c] = dto.StartingBoard[r][c].Id;
+
+        for (int i = 0; i < dto.Turns.Length; i++)
+        {
+            var turn = dto.Turns[i];
+
+            for (int c = 0; c < K.COLS; c++)
+            {
+                int push = turn.Pushers[c].PushValue;
+                if (push >= K.ROWS)
+                {
+                    for (int r = 0; r < K.ROWS; r++) board[r, c] = null;
+                }
+                else
+                {
+                    for (int r = K.ROWS - 1; r >= 0; r--)
+                    {
+                        int src = r - push;
+                        board[r, c] = src >= 0 ? board[src, c] : null;
+                    }
+                }
+            }
+
+            board = RotCW(board);
+
+            foreach (var spawn in turn.Spawns)
+                board[spawn.Pos / K.COLS, spawn.Pos % K.COLS] = spawn.Id;
+
+            var empty = new List<int>();
+            for (int r = 0; r < K.ROWS; r++)
+            for (int c = 0; c < K.COLS; c++)
+                if (board[r, c] == null) empty.Add(r * K.COLS + c);
+
+            if (empty.Count > 0)
+                throw new InvalidOperationException(
+                    $"SERIALIZE FAIL turn={i + 1} missing=[{string.Join(",", empty)}]");
+        }
+    }
+
+    private static int?[,] RotCW(int?[,] board)
+    {
+        var rotated = new int?[K.ROWS, K.COLS];
+        for (int r = 0; r < K.ROWS; r++)
+        for (int c = 0; c < K.COLS; c++)
+            rotated[c, K.ROWS - 1 - r] = board[r, c];
+        return rotated;
     }
 }

@@ -16,10 +16,9 @@ namespace CoinPusherEngine;
 ///   PRIZE_UPGRADE -> { FeatureId, ConvertToId, UpgradeSymbolId, UpgradePrizeValue }
 ///
 /// ReTrigger chaining: when MULTIPLE EXTRA_SPIN tokens exist across a ticket, only the
-/// FIRST is kept as a real spawn entry — every subsequent one is folded into a nested
-/// ReTrigger array inside it, forming one linear chain. This is presentation-only: the
-/// engine still treats each EXTRA_SPIN as an independent token internally; spin-count
-/// math is computed before this serialization step and is never affected by it.
+/// FIRST is kept as a real feature spawn — every subsequent feature is folded into a
+/// nested ReTrigger array inside it. The later physical board slots are still emitted as
+/// ordinary converted cells so the serialized board replay stays fully populated.
 ///
 /// Pos field: every spawn carries "Pos": row*5+col (flat index), per the established schema.
 /// </summary>
@@ -180,9 +179,14 @@ public static class TicketSerializer
             foreach (var kv in sp.Spawns.OrderBy(kv => kv.Key.Item1 * K.COLS + kv.Key.Item2))
             {
                 var posKey = (sp.Spin, kv.Key);
-                if (suppressed.Contains(posKey)) continue;
 
                 int pos = kv.Key.Item1 * K.COLS + kv.Key.Item2;
+
+                if (suppressed.Contains(posKey))
+                {
+                    spawns.Add(ConvertedSpawnObj(kv.Value, pos));
+                    continue;
+                }
 
                 if (chainStart.Contains(posKey) && nested != null)
                 {
@@ -265,6 +269,12 @@ public static class TicketSerializer
                 Feature = new FeatureDto { FeatureId = c.Sym, ConvertToId = cvt }
             }
         };
+    }
+
+    private static SpawnDto ConvertedSpawnObj(Cell c, int pos)
+    {
+        int cvt = c.CvtSym > 0 && !K.IsFeat(c.CvtSym) ? c.CvtSym : K.F_COIN;
+        return new SpawnDto { Pos = pos, Id = cvt };
     }
 
     private static decimal PrizeValueFor(GamePlan plan, int sym, int tier)

@@ -19,12 +19,16 @@ internal sealed class Resolver
 {
     private readonly int[]        _fills;
     private readonly HashSet<int> _winSyms;
+    private readonly int[]        _endBoardSyms;
     private readonly List<string> _log;
     private readonly Random       _rng;
     private readonly FillTracker  _fillTracker;
 
     internal Resolver(int[] fills, HashSet<int> winSyms, List<string> log, Random rng, FillTracker fillTracker)
-    { _fills=fills; _winSyms=winSyms; _log=log; _rng=rng; _fillTracker=fillTracker; }
+    {
+        _fills=fills; _winSyms=winSyms; _log=log; _rng=rng; _fillTracker=fillTracker;
+        _endBoardSyms = _fills.Concat(_winSyms).Distinct().OrderBy(sym => sym).ToArray();
+    }
 
     internal void Resolve(List<SpinPlan> plans)
     {
@@ -75,8 +79,13 @@ internal sealed class Resolver
         for (int r = 0; r < K.ROWS; r++)
         for (int c = 0; c < K.COLS; c++)
             if (sim[r, c] == null)
-                last.Spawns[(r, c)] = Grid.Norm(_fillTracker.Next());
+                last.Spawns[(r, c)] = Grid.Norm(EndBoardSym());
     }
+
+    private int EndBoardSym() =>
+        _endBoardSyms.Length > 0
+            ? _endBoardSyms[_rng.Next(_endBoardSyms.Length)]
+            : _fillTracker.Next();
 
     private static Cell?[,] Simulate(SpinPlan sp)
     {
