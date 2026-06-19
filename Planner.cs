@@ -32,11 +32,12 @@ public sealed class Planner
         var fillSyms = Enumerable.Range(1, _inp.MaxSym).Except(winSyms).ToList();
         var winSet   = new HashSet<int>(winSyms);
         var nonWinTargets = ResolveNonWinTargets(fillSyms);
+        var nonWinPrizeTiers = ResolveNonWinPrizeTiers(nonWinTargets);
 
         // ── Feature resolution ────────────────────────────────────────────
         // Determines which WHEEL / FLUSH / EXTRA_SPIN tokens to include,
         // choosing them first by structural need, then by probability.
-        var effectiveInp = ResolveFeatures(winSyms, fillSyms.Count, log, nonWinTargets);
+        var effectiveInp = ResolveFeatures(winSyms, fillSyms.Count, log, nonWinTargets, nonWinPrizeTiers);
 
         // ── Exact-count scheduling ────────────────────────────────────────
         // Every requested target is scheduled as an actual win. Earlier versions
@@ -60,12 +61,15 @@ public sealed class Planner
             PrizeTiers    = effectiveInp.PrizeTiers,
             PrizeValues   = effectiveInp.PrizeValues,
             NonWinTargets = nonWinTargets,
+            NonWinPrizeTiers = nonWinPrizeTiers,
             MaxSym        = effectiveInp.MaxSym,
         };
 
         log.Add($"wins=[{string.Join(",", winSyms)}] fills=[{string.Join(",", fillSyms)}]");
         if (nonWinTargets.Count > 0)
             log.Add($"nonWins=[{string.Join(",", nonWinTargets.Select(kv=>$"sym{kv.Key}>={kv.Value}<cap{K.FILL_CAP}"))}]");
+        if (nonWinPrizeTiers.Count > 0)
+            log.Add($"nonWinPrizeUpgrades=[{string.Join(",", nonWinPrizeTiers.Select(kv=>$"sym{kv.Key}@tier{kv.Value}"))}]");
         if (decorBudget.Values.Any(b => b > 0))
             log.Add($"decorBudget=[{string.Join(",", decorBudget.Where(kv=>kv.Value>0).Select(kv=>$"sym{kv.Key}={kv.Value}"))}]");
 
@@ -95,6 +99,7 @@ public sealed class Planner
             PrizeTiers = prizeTiers,
             PrizeValues = prizeValues,
             NonWinTargets = nonWinTargets,
+            NonWinPrizeTiers = nonWinPrizeTiers,
             Spins      = spins,
             Log        = log,
         };
@@ -134,16 +139,18 @@ public sealed class Planner
     // close whatever feasibility gap remains, up to its 3-award cap.
     //
     private MathInput ResolveFeatures(List<int> winSyms, int fillSymCount, List<string> log,
-                                      IReadOnlyDictionary<int, int> nonWinTargets)
+                                      IReadOnlyDictionary<int, int> nonWinTargets,
+                                      IReadOnlyDictionary<int, int> nonWinPrizeTiers)
     {
         int physWins = CapacityModel.PhysicalWins(_inp.Targets, 0);
         int spins    = _inp.BaseSpins;   // never clamped — BaseSpins is fixed at 5 by design
         int plannedFillerLoad = nonWinTargets.Values.Sum();
-        int tokenLoad = RequiredTokenLoad(_inp.Required) + plannedFillerLoad;
+        int nonWinPrupTokens = nonWinPrizeTiers.Values.Sum();
+        int tokenLoad = RequiredTokenLoad(_inp.Required) + plannedFillerLoad + nonWinPrupTokens;
         int wheels   = 0, nonWinWheels = 0, flushes = 0, extras = 0;
 
         if (_inp.Required.ContainsKey("WHEEL") || _inp.Required.ContainsKey("EXTRA_SPIN"))
-            return AddNonWinWheelIfPossible(_inp, winSyms, nonWinTargets, log);
+            return AddNonWinFeaturesIfPossible(_inp, winSyms, nonWinTargets, nonWinPrizeTiers, log);
 
         // ── 1. WHEEL ──────────────────────────────────────────────────────
         // Compresses each symbol's physical cell footprint. Applied to symbols
@@ -213,19 +220,20 @@ public sealed class Planner
         int minExtras = CapacityModel.MinExtraSpins(physWins, fillSymCount, spins, tokenLoad);
         extras = Math.Max(0, minExtras);   // -1 (infeasible) clamps to 0; nothing more we can do here
 
-        bool changed = wheels > 0 || flushes > 0 || extras > 0;
+        bool changed = wheels > 0 || flushes > 0 || extras > 0 || nonWinPrupTokens > 0;
         if (!changed) return _inp;
 
-        var merged = new Dictionary<string, int>(_inp.Required);
+        var merged = AddRequired(_inp.Required, "PRIZE_UPGRADE", nonWinPrupTokens);
         if (wheels  > 0) merged["WHEEL"]      = wheels;
         if (flushes > 0) merged["FLUSH"]       = flushes;
         if (extras  > 0) merged["EXTRA_SPIN"]  = extras;
 
-        log.Add($"features: wheels={wheels} nonWinWheels={nonWinWheels} flushes={flushes} extra={extras}" +
+        log.Add($"features: wheels={wheels} nonWinWheels={nonWinWheels} flushes={flushes} extra={extras} nonWinPrup={nonWinPrupTokens}" +
                 $" baseSpins={spins} totalSpins={spins + extras} physWins={physWins}" +
                 $" feasible={CapacityModel.IsFeasible(physWins, spins + extras, fillSymCount, tokenLoad: tokenLoad + extras)}");
 
         var wheelOrder = BuildWheelOrder(winSyms, nonWinTargets, wheels, nonWinWheels);
+        var prizeTiers = MergeTiers(_inp.PrizeTiers, nonWinPrizeTiers);
 
         return new MathInput
         {
@@ -233,9 +241,10 @@ public sealed class Planner
             BaseSpins     = spins,          // always _inp.BaseSpins, untouched
             Required      = merged,
             WheelSymOrder = wheelOrder.Count > 0 ? wheelOrder : _inp.WheelSymOrder,
-            PrizeTiers    = _inp.PrizeTiers,
+            PrizeTiers    = prizeTiers.Count > 0 ? prizeTiers : null,
             PrizeValues   = _inp.PrizeValues,
             NonWinTargets = _inp.NonWinTargets,
+            NonWinPrizeTiers = _inp.NonWinPrizeTiers,
             MaxSym        = _inp.MaxSym,
         };
     }
@@ -263,21 +272,24 @@ public sealed class Planner
             .ToList();
     }
 
-    private MathInput AddNonWinWheelIfPossible(MathInput source, List<int> winSyms,
-                                               IReadOnlyDictionary<int, int> nonWinTargets,
-                                               List<string> log)
+    private MathInput AddNonWinFeaturesIfPossible(MathInput source, List<int> winSyms,
+                                                  IReadOnlyDictionary<int, int> nonWinTargets,
+                                                  IReadOnlyDictionary<int, int> nonWinPrizeTiers,
+                                                  List<string> log)
     {
         bool canWheelNonWin = nonWinTargets.Any(kv => kv.Value >= 2);
         int existingWheels = source.Required.GetValueOrDefault("WHEEL");
-        if (!canWheelNonWin || existingWheels >= FeatReg.Cfg["WHEEL"].Max)
+        int nonWinPrupTokens = nonWinPrizeTiers.Values.Sum();
+        if ((!canWheelNonWin || existingWheels >= FeatReg.Cfg["WHEEL"].Max) && nonWinPrupTokens == 0)
             return source;
 
-        var required = new Dictionary<string, int>(source.Required)
-        {
-            ["WHEEL"] = existingWheels + 1
-        };
-        var wheelOrder = BuildWheelOrder(winSyms, nonWinTargets, existingWheels + 1, 1);
-        log.Add($"features: added nonWinWheels=1 totalWheels={existingWheels + 1}");
+        bool addWheel = canWheelNonWin && existingWheels < FeatReg.Cfg["WHEEL"].Max;
+        var required = AddRequired(source.Required, "PRIZE_UPGRADE", nonWinPrupTokens);
+        if (addWheel) required["WHEEL"] = existingWheels + 1;
+
+        var wheelOrder = BuildWheelOrder(winSyms, nonWinTargets, existingWheels + (addWheel ? 1 : 0), addWheel ? 1 : 0);
+        var prizeTiers = MergeTiers(source.PrizeTiers, nonWinPrizeTiers);
+        log.Add($"features: added nonWinWheels={(addWheel ? 1 : 0)} totalWheels={required.GetValueOrDefault("WHEEL")} nonWinPrup={nonWinPrupTokens}");
 
         return new MathInput
         {
@@ -285,11 +297,31 @@ public sealed class Planner
             BaseSpins     = source.BaseSpins,
             Required      = required,
             WheelSymOrder = wheelOrder.Count > 0 ? wheelOrder : source.WheelSymOrder,
-            PrizeTiers    = source.PrizeTiers,
+            PrizeTiers    = prizeTiers.Count > 0 ? prizeTiers : null,
             PrizeValues   = source.PrizeValues,
             NonWinTargets = source.NonWinTargets,
+            NonWinPrizeTiers = source.NonWinPrizeTiers,
             MaxSym        = source.MaxSym,
         };
+    }
+
+    private static Dictionary<string, int> AddRequired(IReadOnlyDictionary<string, int> required,
+                                                       string id, int count)
+    {
+        var merged = new Dictionary<string, int>(required);
+        if (count <= 0) return merged;
+        merged[id] = merged.GetValueOrDefault(id) + count;
+        return merged;
+    }
+
+    private static Dictionary<int, int> MergeTiers(IReadOnlyDictionary<int, int>? prizeTiers,
+                                                   IReadOnlyDictionary<int, int> nonWinPrizeTiers)
+    {
+        var merged = prizeTiers?.ToDictionary(kv => kv.Key, kv => kv.Value)
+                   ?? new Dictionary<int, int>();
+        foreach (var (sym, tier) in nonWinPrizeTiers)
+            merged[sym] = tier;
+        return merged;
     }
 
     private Dictionary<int, int> ResolveNonWinTargets(IReadOnlyList<int> fillSyms)
@@ -306,6 +338,22 @@ public sealed class Planner
             .OrderBy(_ => _rng.Next())
             .Take(count)
             .ToDictionary(sym => sym, _ => _rng.Next(1, maxPerSymbol + 1));
+    }
+
+    private Dictionary<int, int> ResolveNonWinPrizeTiers(IReadOnlyDictionary<int, int> nonWinTargets)
+    {
+        if (_inp.NonWinPrizeTiers != null)
+            return _inp.NonWinPrizeTiers.ToDictionary(kv => kv.Key, kv => kv.Value);
+
+        if (_inp.Required.GetValueOrDefault("PRIZE_UPGRADE") > 0)
+            return new Dictionary<int, int>();
+
+        var eligible = nonWinTargets.Keys.OrderBy(_ => _rng.Next()).ToList();
+        if (eligible.Count == 0) return new Dictionary<int, int>();
+
+        // One visual upgrade on a near-miss symbol gives the player the prize-upgrade
+        // experience without turning that symbol into a payout/winning target.
+        return new Dictionary<int, int> { { eligible[0], 1 } };
     }
 
     private static Dictionary<int, IReadOnlyDictionary<int, decimal>> ClonePrizeValues(
@@ -379,6 +427,19 @@ public sealed class Planner
                     throw new ArgumentException($"NonWinTargets sym {sym} is already a winning target");
                 if (target <= 0 || target >= K.FILL_CAP)
                     throw new ArgumentException($"NonWinTargets sym {sym} must be in range 1..{K.FILL_CAP - 1}");
+            }
+
+        if (_inp.NonWinPrizeTiers != null)
+            foreach (var (sym, tier) in _inp.NonWinPrizeTiers)
+            {
+                if (sym < 1 || sym > _inp.MaxSym)
+                    throw new ArgumentException($"NonWinPrizeTiers sym {sym} out of range 1..{_inp.MaxSym}");
+                if (_inp.Targets.ContainsKey(sym))
+                    throw new ArgumentException($"NonWinPrizeTiers sym {sym} is already a winning target");
+                if (_inp.NonWinTargets != null && !_inp.NonWinTargets.ContainsKey(sym))
+                    throw new ArgumentException($"NonWinPrizeTiers sym {sym} must exist in NonWinTargets");
+                if (tier <= 0)
+                    throw new ArgumentException($"NonWinPrizeTiers sym {sym} must be > 0");
             }
     }
 

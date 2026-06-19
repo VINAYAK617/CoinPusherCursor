@@ -42,7 +42,14 @@ public static class TicketSerializer
     }
 
     public class WinSymbolDto { public int Id { get; set; } public int Target { get; set; } }
-    public class NonWinSymbolDto { public int Id { get; set; } public int MinTarget { get; set; } public int MaxThreshold { get; set; } }
+    public class NonWinSymbolDto
+    {
+        public int Id { get; set; }
+        public int MinTarget { get; set; }
+        public int MaxThreshold { get; set; }
+        public int? PrizeTier { get; set; }
+        public decimal? PrizeValue { get; set; }
+    }
     public class PrizeTierDto { public int SymId { get; set; } public int Tier { get; set; } }
 
     public class BoardCellDto { public int Id { get; set; } }
@@ -94,7 +101,18 @@ public static class TicketSerializer
                 WinSymbols = plan.Targets.OrderBy(kv => kv.Key)
                                  .Select(kv => new WinSymbolDto { Id = kv.Key, Target = kv.Value }).ToArray(),
                 NonWinSymbols = plan.NonWinTargets.OrderBy(kv => kv.Key)
-                                 .Select(kv => new NonWinSymbolDto { Id = kv.Key, MinTarget = kv.Value, MaxThreshold = K.FILL_CAP }).ToArray(),
+                                 .Select(kv =>
+                                 {
+                                     plan.NonWinPrizeTiers.TryGetValue(kv.Key, out int tier);
+                                     return new NonWinSymbolDto
+                                     {
+                                         Id = kv.Key,
+                                         MinTarget = kv.Value,
+                                         MaxThreshold = K.FILL_CAP,
+                                         PrizeTier = tier > 0 ? tier : null,
+                                         PrizeValue = tier > 0 ? PrizeValueFor(plan, kv.Key, tier) : null,
+                                     };
+                                 }).ToArray(),
                 PrizeTiers = plan.PrizeTiers.OrderBy(kv => kv.Key)
                                  .Select(kv => new PrizeTierDto { SymId = kv.Key, Tier = kv.Value }).ToArray()
             },

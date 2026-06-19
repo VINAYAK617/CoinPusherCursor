@@ -428,7 +428,7 @@ public sealed class LadderCombinator
             BaseSpins  = SpinsForBundle(maxTarget, totalUpgradeTokens, fillSymCount),
             Required   = required,
             PrizeTiers = prizeTiers.Count > 0 ? prizeTiers : null,
-            PrizeValues = BuildPrizeValues(entries.Select(e => e.Sym)),
+            PrizeValues = BuildPrizeValues(Enumerable.Range(1, _rows.Count)),
             MaxSym     = _rows.Count,
         };
     }
@@ -450,7 +450,7 @@ public sealed class LadderCombinator
             BaseSpins  = SpinsFor(c.Target, c.Tier),
             Required   = required,
             PrizeTiers = prizeTiers,
-            PrizeValues = BuildPrizeValues(new[] { c.Sym }),
+            PrizeValues = BuildPrizeValues(Enumerable.Range(1, _rows.Count)),
             MaxSym     = _rows.Count,
         };
     }
