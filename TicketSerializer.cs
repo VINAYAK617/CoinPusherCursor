@@ -78,7 +78,7 @@ public static class TicketSerializer
         public int FeatureId { get; set; }
         public int ConvertToId { get; set; }
         public int? WheelSymbolId { get; set; }
-        public int? WheelStackMultiplier { get; set; }
+        public int? WheelStackValue { get; set; }
         public int? UpgradeSymbolId { get; set; }
         public decimal? UpgradePrizeValue { get; set; }
         public FeatureDto[] ReTrigger { get; set; } = System.Array.Empty<FeatureDto>();
@@ -124,7 +124,7 @@ public static class TicketSerializer
     public static string ToJson(GamePlan plan) =>
         JsonConvert.SerializeObject(ToTicketObject(plan), new JsonSerializerSettings
         {
-            Formatting = Formatting.Indented,
+            Formatting = Formatting.None,
             NullValueHandling = NullValueHandling.Ignore,
             DefaultValueHandling = DefaultValueHandling.Ignore
         });
@@ -229,7 +229,7 @@ public static class TicketSerializer
                     FeatureId = c.Sym,
                     ConvertToId = cvt,
                     WheelSymbolId = c.Fp?.WheelSym ?? 0,
-                    WheelStackMultiplier = c.Fp?.WheelStack ?? 0
+                    WheelStackValue = c.Fp?.WheelStack ?? 0
                 }
             },
             K.F_XSPIN => new SpawnDto
