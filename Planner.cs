@@ -31,11 +31,12 @@ public sealed class Planner
         var winSyms  = _inp.Targets.Keys.OrderBy(x => x).ToList();
         var fillSyms = Enumerable.Range(1, _inp.MaxSym).Except(winSyms).ToList();
         var winSet   = new HashSet<int>(winSyms);
+        var nonWinTargets = ResolveNonWinTargets(fillSyms);
 
         // ── Feature resolution ────────────────────────────────────────────
         // Determines which WHEEL / FLUSH / EXTRA_SPIN tokens to include,
         // choosing them first by structural need, then by probability.
-        var effectiveInp = ResolveFeatures(winSyms, fillSyms.Count, log);
+        var effectiveInp = ResolveFeatures(winSyms, fillSyms.Count, log, nonWinTargets.Values.Sum());
 
         // ── Exact-count scheduling ────────────────────────────────────────
         // Every requested target is scheduled as an actual win. Earlier versions
@@ -55,20 +56,26 @@ public sealed class Planner
             WheelSymOrder = effectiveInp.WheelSymOrder,
             PrizeTiers    = effectiveInp.PrizeTiers,
             PrizeValues   = effectiveInp.PrizeValues,
+            NonWinTargets = nonWinTargets,
             MaxSym        = effectiveInp.MaxSym,
         };
 
         log.Add($"wins=[{string.Join(",", winSyms)}] fills=[{string.Join(",", fillSyms)}]");
+        if (nonWinTargets.Count > 0)
+            log.Add($"nonWins=[{string.Join(",", nonWinTargets.Select(kv=>$"sym{kv.Key}>={kv.Value}<cap{K.FILL_CAP}"))}]");
         if (decorBudget.Values.Any(b => b > 0))
             log.Add($"decorBudget=[{string.Join(",", decorBudget.Where(kv=>kv.Value>0).Select(kv=>$"sym{kv.Key}={kv.Value}"))}]");
 
         // ── Build pipeline ────────────────────────────────────────────────
+        var allocTargets = reducedTargets
+            .Concat(nonWinTargets)
+            .ToDictionary(kv => kv.Key, kv => kv.Value);
         var placed      = new Placer(schedulingInp, _rng, log).Place();
         int totalSpins  = effectiveInp.BaseSpins + placed.Count(f => f.Id == "EXTRA_SPIN");
         var locks       = BuildLocks(placed, log, schedulingInp.Targets);
-        var allocs      = new Scheduler(schedulingInp.Targets, placed, locks, log).Schedule(totalSpins);
+        var allocs      = new Scheduler(allocTargets, placed, locks, log).Schedule(totalSpins);
         var fillTracker = new FillTracker(fillSyms.ToArray());
-        var builder     = new Builder(schedulingInp.Targets, locks, placed,
+        var builder     = new Builder(allocTargets, locks, placed,
                                        fillSyms.ToArray(), log, _rng, fillTracker, decorBudget);
         var spins       = builder.BuildAll(placed, allocs, totalSpins, effectiveInp.BaseSpins);
 
@@ -87,6 +94,7 @@ public sealed class Planner
             FillSyms   = fillSyms,
             PrizeTiers = prizeTiers,
             PrizeValues = prizeValues,
+            NonWinTargets = nonWinTargets,
             Spins      = spins,
             Log        = log,
         };
@@ -125,7 +133,8 @@ public sealed class Planner
     // (so fewer extra spins end up being needed), then EXTRA_SPIN is sized to exactly
     // close whatever feasibility gap remains, up to its 3-award cap.
     //
-    private MathInput ResolveFeatures(List<int> winSyms, int fillSymCount, List<string> log)
+    private MathInput ResolveFeatures(List<int> winSyms, int fillSymCount, List<string> log,
+                                      int plannedFillerLoad)
     {
         // Caller already specified WHEEL or EXTRA_SPIN → respect fully, no changes.
         if (_inp.Required.ContainsKey("WHEEL") || _inp.Required.ContainsKey("EXTRA_SPIN"))
@@ -133,7 +142,7 @@ public sealed class Planner
 
         int physWins = CapacityModel.PhysicalWins(_inp.Targets, 0);
         int spins    = _inp.BaseSpins;   // never clamped — BaseSpins is fixed at 5 by design
-        int tokenLoad = RequiredTokenLoad(_inp.Required);
+        int tokenLoad = RequiredTokenLoad(_inp.Required) + plannedFillerLoad;
         int wheels   = 0, flushes = 0, extras = 0;
 
         // ── 1. WHEEL ──────────────────────────────────────────────────────
@@ -212,8 +221,25 @@ public sealed class Planner
             WheelSymOrder = _inp.WheelSymOrder,
             PrizeTiers    = _inp.PrizeTiers,
             PrizeValues   = _inp.PrizeValues,
+            NonWinTargets = _inp.NonWinTargets,
             MaxSym        = _inp.MaxSym,
         };
+    }
+
+    private Dictionary<int, int> ResolveNonWinTargets(IReadOnlyList<int> fillSyms)
+    {
+        if (_inp.NonWinTargets != null)
+            return _inp.NonWinTargets.ToDictionary(kv => kv.Key, kv => kv.Value);
+
+        if (fillSyms.Count == 0) return new Dictionary<int, int>();
+
+        int count = _rng.Next(1, Math.Min(3, fillSyms.Count) + 1);
+        int maxPerSymbol = Math.Min(3, K.FILL_CAP - 1);
+
+        return fillSyms
+            .OrderBy(_ => _rng.Next())
+            .Take(count)
+            .ToDictionary(sym => sym, _ => _rng.Next(1, maxPerSymbol + 1));
     }
 
     private static Dictionary<int, IReadOnlyDictionary<int, decimal>> ClonePrizeValues(
@@ -276,6 +302,17 @@ public sealed class Planner
                     if (value < 0)
                         throw new ArgumentException($"Prize value for sym {sym} tier {tier} must be >= 0");
                 }
+            }
+
+        if (_inp.NonWinTargets != null)
+            foreach (var (sym, target) in _inp.NonWinTargets)
+            {
+                if (sym < 1 || sym > _inp.MaxSym)
+                    throw new ArgumentException($"NonWinTargets sym {sym} out of range 1..{_inp.MaxSym}");
+                if (_inp.Targets.ContainsKey(sym))
+                    throw new ArgumentException($"NonWinTargets sym {sym} is already a winning target");
+                if (target <= 0 || target >= K.FILL_CAP)
+                    throw new ArgumentException($"NonWinTargets sym {sym} must be in range 1..{K.FILL_CAP - 1}");
             }
     }
 

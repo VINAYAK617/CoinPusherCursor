@@ -4,7 +4,7 @@ namespace CoinPusherEngine;
 
 /// <summary>
 /// Converts a verified GamePlan into the ticket JSON structure the front end consumes:
-///   { winInfo: { totalSpins, winSymbols, prizeTiers },
+///   { winInfo: { totalSpins, winSymbols, nonWinSymbols, prizeTiers },
 ///     startingBoard: [5x5 of {id}],
 ///     turns: [ { pushers: [...], spawns: [{Pos,id,...}] }, ... ] }
 ///
@@ -38,6 +38,8 @@ public static class TicketSerializer
                 totalSpins = plan.TotalSpins,
                 winSymbols = plan.Targets.OrderBy(kv => kv.Key)
                                  .Select(kv => new { id = kv.Key, target = kv.Value }).ToArray(),
+                nonWinSymbols = plan.NonWinTargets.OrderBy(kv => kv.Key)
+                                 .Select(kv => new { id = kv.Key, minTarget = kv.Value, maxThreshold = K.FILL_CAP }).ToArray(),
                 prizeTiers = plan.PrizeTiers.OrderBy(kv => kv.Key)
                                  .Select(kv => new { symId = kv.Key, tier = kv.Value }).ToArray()
             },
