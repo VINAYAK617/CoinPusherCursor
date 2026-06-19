@@ -6,7 +6,8 @@ namespace CoinPusherEngine;
 ///   1. Simulate cur's push+rotate to get the naturally-delivered board.
 ///   2. For EVERY position in next.Board (not just zone rows), spawn the planned cell
 ///      only when the simulation leaves that position empty. Natural cells are never
-///      overwritten by spawns; if a non-empty position differs, this plan is rejected.
+///      overwritten by spawns; if a non-empty position differs, the natural cell becomes
+///      the next planned board cell and Verifier decides whether the outcome still works.
 ///   3. Place feature tokens into reserved filler-spawn slots only.
 ///
 /// Full-board validation (not zone-only) is required for correctness: a mismatch in a
@@ -35,8 +36,8 @@ internal sealed class Resolver
     /// <summary>
     /// For each position in next.Board, spawn the planned cell only if the natural
     /// simulation leaves that position empty. Correctness requires this check to cover
-    /// EVERY board position: a mismatch in an occupied non-zone position would otherwise
-    /// require visually overwriting an existing cell.
+    /// EVERY board position: a mismatch in an occupied non-zone position must follow
+    /// natural board motion, not a visual overwrite.
     /// </summary>
     private void DoSpin(SpinPlan cur, SpinPlan next)
     {
@@ -56,8 +57,10 @@ internal sealed class Resolver
                           || sv.Stack  != plan.Stack;
 
             if (needSpawn && sv != null)
-                throw new InvalidOperationException(
-                    $"SPAWN OVERWRITE S{cur.Spin} pos=({r},{c}) natural=sym{sv.Sym}x{sv.Stack} planned=sym{plan.Sym}x{plan.Stack}");
+            {
+                next.Board[r, c] = sv.Clone();
+                continue;
+            }
 
             if (needSpawn)
                 cur.Spawns[(r, c)] = plan.Clone();
