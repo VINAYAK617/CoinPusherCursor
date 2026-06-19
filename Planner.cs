@@ -54,6 +54,7 @@ public sealed class Planner
             Required      = effectiveInp.Required,
             WheelSymOrder = effectiveInp.WheelSymOrder,
             PrizeTiers    = effectiveInp.PrizeTiers,
+            PrizeValues   = effectiveInp.PrizeValues,
             MaxSym        = effectiveInp.MaxSym,
         };
 
@@ -76,6 +77,7 @@ public sealed class Planner
         var prizeTiers = _inp.PrizeTiers != null
             ? _inp.PrizeTiers.ToDictionary(kv => kv.Key, kv => kv.Value)
             : new Dictionary<int, int>();
+        var prizeValues = ClonePrizeValues(_inp.PrizeValues);
 
         var plan = new GamePlan
         {
@@ -84,6 +86,7 @@ public sealed class Planner
             WinSyms    = winSyms,
             FillSyms   = fillSyms,
             PrizeTiers = prizeTiers,
+            PrizeValues = prizeValues,
             Spins      = spins,
             Log        = log,
         };
@@ -208,9 +211,16 @@ public sealed class Planner
             Required      = merged,
             WheelSymOrder = _inp.WheelSymOrder,
             PrizeTiers    = _inp.PrizeTiers,
+            PrizeValues   = _inp.PrizeValues,
             MaxSym        = _inp.MaxSym,
         };
     }
+
+    private static Dictionary<int, IReadOnlyDictionary<int, decimal>> ClonePrizeValues(
+        IReadOnlyDictionary<int, IReadOnlyDictionary<int, decimal>>? prizeValues) =>
+        prizeValues?.ToDictionary(kv => kv.Key,
+            kv => (IReadOnlyDictionary<int, decimal>)kv.Value.ToDictionary(t => t.Key, t => t.Value))
+        ?? new Dictionary<int, IReadOnlyDictionary<int, decimal>>();
 
     private static int RequiredTokenLoad(IReadOnlyDictionary<string, int> required) =>
         required.Where(kv => FeatReg.Has(kv.Key) && FeatReg.Get(kv.Key).HasToken)
@@ -252,6 +262,20 @@ public sealed class Planner
                     throw new ArgumentException($"PrizeTiers sym {sym} not in Targets");
                 if (tier < 0)
                     throw new ArgumentException($"Prize tier for sym {sym} must be >= 0");
+            }
+
+        if (_inp.PrizeValues != null)
+            foreach (var (sym, tiers) in _inp.PrizeValues)
+            {
+                if (!_inp.Targets.ContainsKey(sym))
+                    throw new ArgumentException($"PrizeValues sym {sym} not in Targets");
+                foreach (var (tier, value) in tiers)
+                {
+                    if (tier < 0)
+                        throw new ArgumentException($"Prize value tier for sym {sym} must be >= 0");
+                    if (value < 0)
+                        throw new ArgumentException($"Prize value for sym {sym} tier {tier} must be >= 0");
+                }
             }
     }
 

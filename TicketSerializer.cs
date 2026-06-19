@@ -11,7 +11,7 @@ namespace CoinPusherEngine;
 /// Feature object shapes:
 ///   WHEEL         -> { featureId, convertToId, wheelSymbolId, wheelStackMultiplier }
 ///   EXTRA_SPIN    -> { featureId, convertToId, ReTrigger: [...] }
-///   PRIZE_UPGRADE -> { featureId, convertToId, upgradeSymbolId, upgradePrizeTier }
+///   PRIZE_UPGRADE -> { featureId, convertToId, upgradeSymbolId, upgradePrizeValue }
 ///
 /// ReTrigger chaining: when MULTIPLE EXTRA_SPIN tokens exist across a ticket, only the
 /// FIRST is kept as a real spawn entry — every subsequent one is folded into a nested
@@ -115,7 +115,7 @@ public static class TicketSerializer
                     continue;
                 }
 
-                spawns.Add(SpawnObj(kv.Value, pos));
+                spawns.Add(SpawnObj(kv.Value, pos, plan));
             }
 
             turns.Add(new { pushers, spawns = spawns.ToArray() });
@@ -124,7 +124,7 @@ public static class TicketSerializer
         return turns.ToArray();
     }
 
-    private static object SpawnObj(Cell c, int pos)
+    private static object SpawnObj(Cell c, int pos, GamePlan plan)
     {
         if (!c.IsFeat)
             return c.Stack > 1
@@ -141,8 +141,20 @@ public static class TicketSerializer
                 featureId = c.Sym, convertToId = cvt, ReTrigger = Array.Empty<object>() } },
             K.F_PRUP  => (object)new { Pos = pos, id = c.Sym, feature = new {
                 featureId = c.Sym, convertToId = cvt,
-                upgradeSymbolId = c.Fp?.PrupSym ?? 0, upgradePrizeTier = c.Fp?.PrupTier ?? 0 } },
+                upgradeSymbolId = c.Fp?.PrupSym ?? 0,
+                upgradePrizeValue = PrizeValueFor(plan, c.Fp?.PrupSym ?? 0, c.Fp?.PrupTier ?? 0) } },
             _ => (object)new { Pos = pos, id = c.Sym, feature = new { featureId = c.Sym, convertToId = cvt } }
         };
+    }
+
+    private static decimal PrizeValueFor(GamePlan plan, int sym, int tier)
+    {
+        if (plan.PrizeValues.TryGetValue(sym, out var tiers)
+            && tiers.TryGetValue(tier, out decimal value))
+            return value;
+
+        // Hand-authored MathInput may only provide PrizeTiers. Keep serialization usable
+        // while LadderCombinator-backed tickets emit actual prize values.
+        return tier;
     }
 }
