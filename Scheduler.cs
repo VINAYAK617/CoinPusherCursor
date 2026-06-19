@@ -92,7 +92,7 @@ internal sealed class Scheduler
 
             if (remaining > 0)
             {
-                _log.Add($"  WARN: {remaining} unplaced wins sym={sym} -> forced last slot");
+                _log.Add($"  WARN: {remaining} unplaced allocations sym={sym} -> forced last slot");
                 Add(slots[totalSpins - 1], sym, remaining);
             }
         }

@@ -36,7 +36,7 @@ public sealed class Planner
         // ── Feature resolution ────────────────────────────────────────────
         // Determines which WHEEL / FLUSH / EXTRA_SPIN tokens to include,
         // choosing them first by structural need, then by probability.
-        var effectiveInp = ResolveFeatures(winSyms, fillSyms.Count, log, nonWinTargets.Values.Sum());
+        var effectiveInp = ResolveFeatures(winSyms, fillSyms.Count, log, nonWinTargets);
 
         // ── Exact-count scheduling ────────────────────────────────────────
         // Every requested target is scheduled as an actual win. Earlier versions
@@ -48,9 +48,12 @@ public sealed class Planner
         // for every win symbol, so Verifier failures are not caused by optional art.
         var decorBudget    = new Dictionary<int, int>();
         var reducedTargets = effectiveInp.Targets.ToDictionary(kv => kv.Key, kv => kv.Value);
+        var allocTargets = reducedTargets
+            .Concat(nonWinTargets)
+            .ToDictionary(kv => kv.Key, kv => kv.Value);
         var schedulingInp  = new MathInput
         {
-            Targets       = reducedTargets,
+            Targets       = allocTargets,
             BaseSpins     = effectiveInp.BaseSpins,
             Required      = effectiveInp.Required,
             WheelSymOrder = effectiveInp.WheelSymOrder,
@@ -67,12 +70,9 @@ public sealed class Planner
             log.Add($"decorBudget=[{string.Join(",", decorBudget.Where(kv=>kv.Value>0).Select(kv=>$"sym{kv.Key}={kv.Value}"))}]");
 
         // ── Build pipeline ────────────────────────────────────────────────
-        var allocTargets = reducedTargets
-            .Concat(nonWinTargets)
-            .ToDictionary(kv => kv.Key, kv => kv.Value);
         var placed      = new Placer(schedulingInp, _rng, log).Place();
         int totalSpins  = effectiveInp.BaseSpins + placed.Count(f => f.Id == "EXTRA_SPIN");
-        var locks       = BuildLocks(placed, log, schedulingInp.Targets);
+        var locks       = BuildLocks(placed, log, allocTargets);
         var allocs      = new Scheduler(allocTargets, placed, locks, log).Schedule(totalSpins);
         var fillTracker = new FillTracker(fillSyms.ToArray());
         var builder     = new Builder(allocTargets, locks, placed,
@@ -134,16 +134,16 @@ public sealed class Planner
     // close whatever feasibility gap remains, up to its 3-award cap.
     //
     private MathInput ResolveFeatures(List<int> winSyms, int fillSymCount, List<string> log,
-                                      int plannedFillerLoad)
+                                      IReadOnlyDictionary<int, int> nonWinTargets)
     {
-        // Caller already specified WHEEL or EXTRA_SPIN → respect fully, no changes.
-        if (_inp.Required.ContainsKey("WHEEL") || _inp.Required.ContainsKey("EXTRA_SPIN"))
-            return _inp;
-
         int physWins = CapacityModel.PhysicalWins(_inp.Targets, 0);
         int spins    = _inp.BaseSpins;   // never clamped — BaseSpins is fixed at 5 by design
+        int plannedFillerLoad = nonWinTargets.Values.Sum();
         int tokenLoad = RequiredTokenLoad(_inp.Required) + plannedFillerLoad;
-        int wheels   = 0, flushes = 0, extras = 0;
+        int wheels   = 0, nonWinWheels = 0, flushes = 0, extras = 0;
+
+        if (_inp.Required.ContainsKey("WHEEL") || _inp.Required.ContainsKey("EXTRA_SPIN"))
+            return AddNonWinWheelIfPossible(_inp, winSyms, nonWinTargets, log);
 
         // ── 1. WHEEL ──────────────────────────────────────────────────────
         // Compresses each symbol's physical cell footprint. Applied to symbols
@@ -170,6 +170,18 @@ public sealed class Planner
                 tokenLoad++;
                 physWins = physWins - tgt + physNew;
             }
+        }
+
+        // Reserve one WHEEL for a near-miss filler symbol when possible. This makes the
+        // WHEEL feature visibly apply to non-winning symbols too, but the symbol still
+        // stays governed by Verifier's non-winning cap (< FILL_CAP).
+        bool canWheelNonWin = nonWinTargets.Any(kv => kv.Value >= 2)
+                           && wheels < FeatReg.Cfg["WHEEL"].Max;
+        if (canWheelNonWin)
+        {
+            wheels++;
+            nonWinWheels = 1;
+            tokenLoad++;
         }
 
         // ── 2. FLUSH ──────────────────────────────────────────────────────
@@ -209,20 +221,74 @@ public sealed class Planner
         if (flushes > 0) merged["FLUSH"]       = flushes;
         if (extras  > 0) merged["EXTRA_SPIN"]  = extras;
 
-        log.Add($"features: wheels={wheels} flushes={flushes} extra={extras}" +
+        log.Add($"features: wheels={wheels} nonWinWheels={nonWinWheels} flushes={flushes} extra={extras}" +
                 $" baseSpins={spins} totalSpins={spins + extras} physWins={physWins}" +
                 $" feasible={CapacityModel.IsFeasible(physWins, spins + extras, fillSymCount, tokenLoad: tokenLoad + extras)}");
+
+        var wheelOrder = BuildWheelOrder(winSyms, nonWinTargets, wheels, nonWinWheels);
 
         return new MathInput
         {
             Targets       = _inp.Targets,
             BaseSpins     = spins,          // always _inp.BaseSpins, untouched
             Required      = merged,
-            WheelSymOrder = _inp.WheelSymOrder,
+            WheelSymOrder = wheelOrder.Count > 0 ? wheelOrder : _inp.WheelSymOrder,
             PrizeTiers    = _inp.PrizeTiers,
             PrizeValues   = _inp.PrizeValues,
             NonWinTargets = _inp.NonWinTargets,
             MaxSym        = _inp.MaxSym,
+        };
+    }
+
+    private List<int> BuildWheelOrder(List<int> winSyms, IReadOnlyDictionary<int, int> nonWinTargets,
+                                      int wheels, int nonWinWheels)
+    {
+        var winOrder = winSyms.OrderByDescending(s => _inp.Targets[s]).ToList();
+        var nonWinOrder = nonWinTargets
+            .Where(kv => kv.Value >= 2)
+            .OrderByDescending(kv => kv.Value)
+            .Select(kv => kv.Key)
+            .ToList();
+
+        if (_inp.WheelSymOrder != null)
+            return _inp.WheelSymOrder.Concat(nonWinOrder).Distinct().ToList();
+
+        if (nonWinWheels == 0) return winOrder;
+
+        int winWheelCount = Math.Max(0, wheels - nonWinWheels);
+        return winOrder.Take(winWheelCount)
+            .Concat(nonWinOrder)
+            .Concat(winOrder.Skip(winWheelCount))
+            .Distinct()
+            .ToList();
+    }
+
+    private MathInput AddNonWinWheelIfPossible(MathInput source, List<int> winSyms,
+                                               IReadOnlyDictionary<int, int> nonWinTargets,
+                                               List<string> log)
+    {
+        bool canWheelNonWin = nonWinTargets.Any(kv => kv.Value >= 2);
+        int existingWheels = source.Required.GetValueOrDefault("WHEEL");
+        if (!canWheelNonWin || existingWheels >= FeatReg.Cfg["WHEEL"].Max)
+            return source;
+
+        var required = new Dictionary<string, int>(source.Required)
+        {
+            ["WHEEL"] = existingWheels + 1
+        };
+        var wheelOrder = BuildWheelOrder(winSyms, nonWinTargets, existingWheels + 1, 1);
+        log.Add($"features: added nonWinWheels=1 totalWheels={existingWheels + 1}");
+
+        return new MathInput
+        {
+            Targets       = source.Targets,
+            BaseSpins     = source.BaseSpins,
+            Required      = required,
+            WheelSymOrder = wheelOrder.Count > 0 ? wheelOrder : source.WheelSymOrder,
+            PrizeTiers    = source.PrizeTiers,
+            PrizeValues   = source.PrizeValues,
+            NonWinTargets = source.NonWinTargets,
+            MaxSym        = source.MaxSym,
         };
     }
 
