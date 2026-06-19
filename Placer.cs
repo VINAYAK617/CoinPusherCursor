@@ -32,6 +32,22 @@ internal sealed class Placer
             double prob = FeatReg.Cfg[id].P;
             int capSpin = Math.Min(maxS, totalSpinsKnown - 1);
 
+            if ((id == "FLUSH" || id == "EXTRA_SPIN") && req > 0)
+            {
+                int placed = PlaceRequiredFeature(id, req, minS, capSpin, done, used);
+                if (placed < req)
+                    _log.Add($"  WARN: could only place {placed}/{req} required {id}");
+                continue;
+            }
+
+            if (id == "PRIZE_UPGRADE" && req > 0)
+            {
+                int placed = PlaceRequiredPrizeUpgrades(req, minS, capSpin, done, used);
+                if (placed < req)
+                    _log.Add($"  WARN: could only place {placed}/{req} required PRIZE_UPGRADE");
+                continue;
+            }
+
             for (int i = 0; i < limit; i++)
             {
                 bool must = i < req;
@@ -49,6 +65,63 @@ internal sealed class Placer
             }
         }
         return done;
+    }
+
+    private int PlaceRequiredFeature(string id, int req, int minS, int maxS,
+                                     List<PlacedFeat> done, HashSet<(int, int)> used)
+    {
+        var feat = FeatReg.Get(id);
+        int placed = 0;
+
+        for (int spin = minS; spin < maxS && placed < req; spin++)
+        for (int col = 0; col < K.COLS && placed < req; col++)
+        {
+            if (used.Contains((spin, col))) continue;
+
+            var r = feat.TryPlace(new PlaceCtx
+            {
+                Spin=spin, Col=col, Done=done, Rng=_rng,
+                Input=_inp, MaxSpin=maxS, MinSpin=minS, Used=used,
+            });
+            if (r == null) continue;
+
+            done.Add(r);
+            used.Add((r.Spin, r.Col));
+            placed++;
+            _log.Add($"  placed {id}@S{r.Spin}C{r.Col}{(r.WSym != 0 ? $" sym={r.WSym}" : "")}");
+        }
+
+        return placed;
+    }
+
+    private int PlaceRequiredPrizeUpgrades(int req, int minS, int maxS,
+                                           List<PlacedFeat> done, HashSet<(int, int)> used)
+    {
+        var feat = FeatReg.Get("PRIZE_UPGRADE");
+        int placed = 0;
+
+        // PRIZE_UPGRADE tiers must be chronological per symbol. Scan spins in order
+        // and columns left-to-right so tier 1 is guaranteed to land before tier 2,
+        // instead of relying on random retries to discover a valid ordering.
+        for (int spin = minS; spin < maxS && placed < req; spin++)
+        for (int col = 0; col < K.COLS - 1 && placed < req; col++)
+        {
+            if (used.Contains((spin, col))) continue;
+
+            var r = feat.TryPlace(new PlaceCtx
+            {
+                Spin=spin, Col=col, Done=done, Rng=_rng,
+                Input=_inp, MaxSpin=maxS, MinSpin=minS, Used=used,
+            });
+            if (r == null) continue;
+
+            done.Add(r);
+            used.Add((r.Spin, r.Col));
+            placed++;
+            _log.Add($"  placed PRIZE_UPGRADE@S{r.Spin}C{r.Col} sym={r.PrupSym} tier={r.PrupTier}");
+        }
+
+        return placed;
     }
 
     private PlacedFeat? TryPlace(string id, int minS, int maxS,

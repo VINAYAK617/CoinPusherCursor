@@ -189,6 +189,7 @@ public sealed class Planner
         int nonWinPrupTokens = nonWinPrizeTiers.Values.Sum();
         int tokenLoad = RequiredTokenLoad(_inp.Required) + plannedFillerLoad + nonWinPrupTokens;
         int wheels   = 0, nonWinWheels = 0, flushes = 0, extras = 0;
+        bool allowOptionalFeatures = !IsHighPressureTicket();
 
         if (_inp.Required.ContainsKey("WHEEL") || _inp.Required.ContainsKey("EXTRA_SPIN"))
             return AddNonWinFeaturesIfPossible(_inp, winSyms, nonWinTargets, nonWinPrizeTiers, log);
@@ -211,7 +212,7 @@ public sealed class Planner
             if (physNew >= tgt) continue;  // no compression benefit
 
             bool needed = CapacityModel.MinExtraSpins(physWins, fillSymCount, spins, tokenLoad) < 0;
-            bool lucky  = !needed && _rng.NextDouble() < P_WHEEL && tgt >= 10;
+            bool lucky  = allowOptionalFeatures && !needed && _rng.NextDouble() < P_WHEEL && tgt >= 10;
             if (needed || lucky)
             {
                 wheels++;
@@ -223,7 +224,8 @@ public sealed class Planner
         // Reserve one WHEEL for a near-miss filler symbol when possible. This makes the
         // WHEEL feature visibly apply to non-winning symbols too, but the symbol still
         // stays governed by Verifier's non-winning cap (< FILL_CAP).
-        bool canWheelNonWin = nonWinTargets.Any(kv => kv.Value >= 2)
+        bool canWheelNonWin = allowOptionalFeatures
+                           && nonWinTargets.Any(kv => kv.Value >= 2)
                            && wheels < FeatReg.Cfg["WHEEL"].Max;
         if (canWheelNonWin)
         {
@@ -240,7 +242,7 @@ public sealed class Planner
         for (int f = 0; f < maxFlush; f++)
         {
             bool needed = CapacityModel.MinExtraSpins(physWins, fillSymCount, spins, tokenLoad) < 0;
-            bool lucky  = !needed && _rng.NextDouble() < P_FLUSH;
+            bool lucky  = allowOptionalFeatures && !needed && _rng.NextDouble() < P_FLUSH;
             if (needed || lucky) flushes++;
             else break;
         }
@@ -370,6 +372,9 @@ public sealed class Planner
         if (_inp.NonWinTargets != null)
             return _inp.NonWinTargets.ToDictionary(kv => kv.Key, kv => kv.Value);
 
+        if (IsHighPressureTicket())
+            return new Dictionary<int, int>();
+
         if (fillSyms.Count == 0) return new Dictionary<int, int>();
 
         int count = _rng.Next(1, Math.Min(3, fillSyms.Count) + 1);
@@ -396,6 +401,11 @@ public sealed class Planner
         // experience without turning that symbol into a payout/winning target.
         return new Dictionary<int, int> { { eligible[0], 1 } };
     }
+
+    private bool IsHighPressureTicket() =>
+        _inp.Targets.Count >= 4
+        || _inp.Targets.Values.Sum() >= 80
+        || _inp.Required.GetValueOrDefault("PRIZE_UPGRADE") >= 4;
 
     private static Dictionary<int, IReadOnlyDictionary<int, decimal>> ClonePrizeValues(
         IReadOnlyDictionary<int, IReadOnlyDictionary<int, decimal>>? prizeValues) =>

@@ -308,6 +308,9 @@ internal sealed class Builder
         int maxTotal = freeCols * K.MAX_PUSH;
         int targetTotal = Math.Clamp(needed, minTotal, maxTotal);
 
+        if (IsDenseTicket())
+            return MakeDeterministicPushValues(freeCols, targetTotal);
+
         var pv = Enumerable.Repeat(K.MIN_PUSH, freeCols).ToArray();
         int left = targetTotal - minTotal;
         while (left > 0)
@@ -335,6 +338,22 @@ internal sealed class Builder
             pv[lo]--;
         }
 
+        return pv;
+    }
+
+    private bool IsDenseTicket() =>
+        _targets.Count >= 4 || _targets.Values.Sum() >= 80;
+
+    private static int[] MakeDeterministicPushValues(int freeCols, int targetTotal)
+    {
+        var pv = Enumerable.Repeat(K.MIN_PUSH, freeCols).ToArray();
+        int left = targetTotal - freeCols * K.MIN_PUSH;
+        for (int i = 0; i < freeCols && left > 0; i++)
+        {
+            int add = Math.Min(K.MAX_PUSH - K.MIN_PUSH, left);
+            pv[i] += add;
+            left -= add;
+        }
         return pv;
     }
 
