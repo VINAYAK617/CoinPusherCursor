@@ -22,8 +22,8 @@ internal static class K
     // Feature symbol IDs
     internal const int F_WHEEL    = 11;
     internal const int F_XSPIN    = 12;
-    internal const int F_FLUSH_ID = 13;   // pusher flag only — no board token
-    internal const int F_PRUP     = 14;
+    internal const int F_FLUSH_ID = 14;   // pusher flag only — no board token
+    internal const int F_PRUP     = 13;
     internal const int F_COIN     = 1;    // fallback filler when CvtSym is invalid — symbol 1 is always valid
 
     internal static bool IsFeat(int id) => id is F_WHEEL or F_XSPIN or F_PRUP;

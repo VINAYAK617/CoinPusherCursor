@@ -11,6 +11,8 @@ public sealed class Planner
     private readonly MathInput _inp;
     private readonly int       _baseSeed;
     private Random             _rng;
+    private static readonly Random SeedRng = new();
+    private static readonly object SeedLock = new();
 
     // Optional-feature probability parameters.
     // WHEEL and FLUSH are desirable for game variety, but are never forced unless
@@ -22,8 +24,13 @@ public sealed class Planner
     public Planner(MathInput inp, int? seed = null)
     {
         _inp = inp;
-        _baseSeed = seed ?? Random.Shared.Next();
+        _baseSeed = seed ?? NextSeed();
         _rng = new Random(_baseSeed);
+    }
+
+    private static int NextSeed()
+    {
+        lock (SeedLock) return SeedRng.Next();
     }
 
     public GamePlan Plan()
