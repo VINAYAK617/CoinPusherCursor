@@ -62,15 +62,9 @@ internal sealed class Scheduler
             int lastFireSpin = myLocks.Count > 0 ? myLocks[^1].FireSpin : 0;
             int deadline      = myLocks.Count > 0 ? myLocks[0].FireSpin - 1 : totalSpins;
 
-            // Pass 1: fill pre-deadline spins (normal EDF — before the symbol's first WHEEL fires)
-            for (int s = 0; s < deadline && remaining > 0; s++)
-            {
-                int cap   = Cap(s, slots, tokenReserve);
-                if (cap <= 0) continue;
-                int place = Math.Min(cap, remaining);
-                Add(slots[s], sym, place);
-                remaining -= place;
-            }
+            // Pass 1: fill pre-deadline spins (normal EDF — before the symbol's first WHEEL fires).
+            // Spread across the least-loaded eligible spins instead of filling spin 1 to capacity.
+            remaining = FillAcrossSlots(sym, remaining, Enumerable.Range(0, deadline), slots, tokenReserve);
 
             // Pass 2: post-deadline fallback. The symbol can still be collected normally
             // (unstacked) in spins after its WHEEL(s) fire — scan forward from just after
@@ -80,14 +74,9 @@ internal sealed class Scheduler
             //     in Builder also actively clears this symbol from those zone positions).
             if (remaining > 0)
             {
-                for (int s = lastFireSpin + 1; s < totalSpins - 1 && remaining > 0; s++)
-                {
-                    int cap   = Cap(s, slots, tokenReserve);
-                    if (cap <= 0) continue;
-                    int place = Math.Min(cap, remaining);
-                    Add(slots[s], sym, place);
-                    remaining -= place;
-                }
+                remaining = FillAcrossSlots(sym, remaining,
+                    Enumerable.Range(lastFireSpin + 1, Math.Max(0, totalSpins - 1 - (lastFireSpin + 1))),
+                    slots, tokenReserve);
             }
 
             if (remaining > 0)
@@ -122,6 +111,28 @@ internal sealed class Scheduler
             : freeCols * K.MAX_PUSH + flushCap - reserved;
 
         return Math.Max(0, ceiling - already);
+    }
+
+    private int FillAcrossSlots(int sym, int remaining, IEnumerable<int> candidates,
+                                List<Dictionary<int, int>> slots, Dictionary<int, int> tokenReserve)
+    {
+        var eligible = candidates.Distinct().Where(s => s >= 0 && s < slots.Count).ToList();
+        while (remaining > 0)
+        {
+            var best = eligible
+                .Select(s => (Slot: s, Cap: Cap(s, slots, tokenReserve), Load: slots[s].Values.Sum()))
+                .Where(x => x.Cap > 0)
+                .OrderBy(x => x.Load)
+                .ThenBy(x => x.Slot)
+                .FirstOrDefault();
+
+            if (best.Cap <= 0) break;
+
+            Add(slots[best.Slot], sym, 1);
+            remaining--;
+        }
+
+        return remaining;
     }
 
     private static void Add(Dictionary<int, int> d, int k, int v)
