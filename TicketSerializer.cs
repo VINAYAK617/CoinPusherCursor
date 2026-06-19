@@ -152,11 +152,12 @@ public static class TicketSerializer
         {
             var cell = allXSpinTokens[i].Cell;
             int cvt  = cell.CvtSym > 0 ? cell.CvtSym : K.F_COIN;
+            bool hasRetrigger = nested is not null;
             var f = new FeatureDto
             {
                 FeatureId = K.F_XSPIN,
-                ConvertToId = cvt,
-                ReTrigger = nested is null ? System.Array.Empty<FeatureDto>() : new[] { nested }
+                ConvertToId = hasRetrigger ? K.F_XSPIN : cvt,
+                ReTrigger = hasRetrigger ? new[] { nested! } : System.Array.Empty<FeatureDto>()
             };
             nested = f;
         }
@@ -189,7 +190,7 @@ public static class TicketSerializer
                         Feature = new FeatureDto
                         {
                             FeatureId = K.F_XSPIN,
-                            ConvertToId = cvt,
+                            ConvertToId = K.F_XSPIN,
                             ReTrigger = new[] { nested }
                         }
                     });
