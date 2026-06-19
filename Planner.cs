@@ -9,24 +9,50 @@ namespace CoinPusherEngine;
 public sealed class Planner
 {
     private readonly MathInput _inp;
-    private readonly Random    _rng;
+    private readonly int       _baseSeed;
+    private Random             _rng;
 
     // Optional-feature probability parameters.
     // WHEEL and FLUSH are desirable for game variety, but are never forced unless
     // the ticket is structurally infeasible without them.
     private const double P_WHEEL = 0.65;  // per eligible win symbol
     private const double P_FLUSH = 0.35;  // per optional FLUSH token
+    private const int    MaxPlanAttempts = 512;
 
     public Planner(MathInput inp, int? seed = null)
     {
         _inp = inp;
-        _rng = seed.HasValue ? new Random(seed.Value) : new Random();
+        _baseSeed = seed ?? Random.Shared.Next();
+        _rng = new Random(_baseSeed);
     }
 
     public GamePlan Plan()
     {
         Validate();
 
+        Exception? last = null;
+        for (int attempt = 0; attempt < MaxPlanAttempts; attempt++)
+        {
+            _rng = new Random(AttemptSeed(_baseSeed, attempt));
+            try
+            {
+                var plan = PlanOnce();
+                if (attempt > 0)
+                    plan.Log.Insert(0, $"planned after {attempt + 1} internal attempts");
+                return plan;
+            }
+            catch (Exception ex)
+            {
+                last = ex;
+            }
+        }
+
+        throw new InvalidOperationException(
+            $"Could not build a verified plan after {MaxPlanAttempts} internal attempts.", last);
+    }
+
+    private GamePlan PlanOnce()
+    {
         var log      = new List<string>();
         var winSyms  = _inp.Targets.Keys.OrderBy(x => x).ToList();
         var fillSyms = Enumerable.Range(1, _inp.MaxSym).Except(winSyms).ToList();
@@ -109,6 +135,21 @@ public sealed class Planner
         log.Add("verified OK");
 
         return plan;
+    }
+
+    private static int AttemptSeed(int seed, int attempt)
+    {
+        unchecked
+        {
+            uint x = (uint)seed;
+            x ^= (uint)(attempt + 1) * 0x9E3779B9u;
+            x ^= x >> 16;
+            x *= 0x85EBCA6Bu;
+            x ^= x >> 13;
+            x *= 0xC2B2AE35u;
+            x ^= x >> 16;
+            return (int)x;
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -407,8 +448,8 @@ public sealed class Planner
         if (_inp.PrizeValues != null)
             foreach (var (sym, tiers) in _inp.PrizeValues)
             {
-                if (!_inp.Targets.ContainsKey(sym))
-                    throw new ArgumentException($"PrizeValues sym {sym} not in Targets");
+                if (sym < 1 || sym > _inp.MaxSym)
+                    throw new ArgumentException($"PrizeValues sym {sym} out of range 1..{_inp.MaxSym}");
                 foreach (var (tier, value) in tiers)
                 {
                     if (tier < 0)

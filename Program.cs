@@ -19,10 +19,6 @@ Console.WriteLine($"Entries: [{string.Join(";",bundle.Entries.Select(e=>$"sym{e.
 Console.WriteLine($"Targets: [{string.Join(",",bundle.Input.Targets.Select(kv=>$"sym{kv.Key}={kv.Value}"))}]");
 Console.WriteLine($"BaseSpins: {bundle.Input.BaseSpins}");
 
-GamePlan? plan = null;
-for (int seed = 0; seed < 5000 && plan == null; seed++)
-    try { var p = new Planner(bundle.Input, seed).Plan(); if (p.Verified) plan = p; } catch {}
-
-if (plan == null) { Console.WriteLine("No seed found."); return; }
+var plan = new Planner(bundle.Input, seed: 0).Plan();
 var json = TicketSerializer.ToJson(plan);
 Console.WriteLine(json);
