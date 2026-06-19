@@ -49,9 +49,8 @@ public sealed class BundleEntry
 /// <summary>
 /// Result of bundling a whole prize list into one ticket: the ready-to-plan MathInput,
 /// which symbol covered which amount(s), and which requested amounts couldn't be included
-/// because of a tier conflict (two different amounts independently wanted the same symbol
-/// at two different tiers — only the first one resolved keeps that symbol; the rest are
-/// dropped rather than re-rolled or treated as an error).
+/// because every requested prize amount must consume a distinct symbol; if the ladder
+/// cannot represent all requested prizes distinctly, bundling throws.
 /// </summary>
 public sealed class BundleResult
 {
@@ -139,52 +138,6 @@ public sealed class LadderCombinator
     /// (e.g. {1, 2, 5, 10}) rather than a hand-authored MathInput.
     ///
     /// For each amount (processed smallest first, since smaller amounts are typically
-    /// base tiers that larger amounts upgrade FROM), a candidate is picked the same way
-    /// Resolve() does — 50/50 between a direct (tier 0) and an upgrade (tier 1+) path
-    /// when both exist. The picked symbol is then merged into the running bundle:
-    ///   • New symbol → added fresh.
-    ///   • Same symbol, same tier already in the bundle → free sharing; this amount is
-    ///     satisfied by an entry already present (no new Targets slot needed).
-    ///   • Same symbol, DIFFERENT tier already in the bundle → a genuine conflict, since
-    ///     a symbol can only sit at one final tier per ticket. The earlier decision wins;
-    ///     this amount is dropped (recorded in Skipped) rather than re-rolled.
-    ///
-    /// The result's MathInput is ready to hand straight to Planner — Targets, Required,
-    /// and PrizeTiers are already merged correctly, including multi-step upgrade chains
-    /// (a symbol needing tier 2 gets Required["PRIZE_UPGRADE"] sized to place BOTH the
-    /// tier-1 and tier-2 token, exactly matching how PrupFeat climbs one step at a time).
-    /// </summary>
-    /// <summary>
-    /// Build ONE multi-symbol ticket that covers an entire prize list at once — the
-    /// engine's actual deliverable when math hands down only a flat list of amounts
-    /// (e.g. {1, 2, 5, 10}) rather than a hand-authored MathInput.
-    ///
-    /// For each amount (processed smallest first, since smaller amounts are typically
-    /// base tiers that larger amounts upgrade FROM), candidates are split into "direct"
-    /// (tier 0) and "upgrade" (tier 1+) groups, and a 50/50 coin picks which group is
-    /// tried FIRST when both exist. Every candidate in the preferred group is tried, in
-    /// order, before falling back to every candidate in the other group — a single
-    /// random pick colliding with an earlier decision is NOT treated as failure; only
-    /// running out of every candidate in both groups is.
-    ///
-    /// Merging a candidate into the running bundle:
-    ///   • New symbol → added fresh.
-    ///   • Same symbol, same tier already in the bundle → free sharing; this amount is
-    ///     satisfied by an entry already present (no new Targets slot needed).
-    ///   • Same symbol, different tier already in the bundle → this specific candidate
-    ///     conflicts; move on to the next candidate (next symbol/tier) instead.
-    ///
-    /// Failure is loud, never silent: if an amount has NO candidates in the ladder table
-    /// at all, or every candidate conflicts with symbols already locked by other amounts
-    /// in this bundle, Bundle() throws an InvalidOperationException naming the amount and
-    /// the reason — it never returns a result with amounts quietly missing.
-    /// </summary>
-    /// <summary>
-    /// Build ONE multi-symbol ticket that covers an entire prize list at once — the
-    /// engine's actual deliverable when math hands down only a flat list of amounts
-    /// (e.g. {1, 2, 5, 10}) rather than a hand-authored MathInput.
-    ///
-    /// For each amount (processed smallest first, since smaller amounts are typically
     /// base tiers that larger amounts upgrade FROM), resolution tries two strategies:
     ///
     ///   1. SINGLE CANDIDATE — does any one symbol/tier in the table pay exactly this
@@ -198,21 +151,17 @@ public sealed class LadderCombinator
     ///      $45 with no direct match might be reached via sym4@tier1($20) + sym3@tier2($25).
     ///      When multiple valid combinations exist, one is picked uniformly at random.
     ///
-    /// Merging a candidate (from either strategy) into the running bundle:
-    ///   • New symbol → added fresh.
-    ///   • Same symbol, same tier already locked by an earlier amount → free sharing;
-    ///     this amount's contribution is satisfied by the entry already present.
-    ///   • Same symbol, different tier already locked → unusable; that specific
-    ///     candidate/combination is skipped in favor of another one, if any exists.
+    /// Every requested amount must consume a distinct symbol. A symbol already used by
+    /// an earlier amount cannot be reused, even at the same tier, so duplicate prizes
+    /// produce separate visible win entries whenever the ladder has enough candidates.
     ///
     /// Every multi-symbol combination is applied atomically — either every symbol in
     /// the chosen combination merges cleanly, or that combination isn't used at all.
     ///
-    /// Failure is loud, never silent: if an amount cannot be reached by any single
-    /// candidate AND no combination of candidates sums to it (after accounting for
-    /// symbols already locked by other amounts in this bundle), Bundle() throws an
-    /// InvalidOperationException naming the amount — it never returns a result with
-    /// amounts quietly missing.
+    /// Failure is loud, never silent: if an amount cannot be reached by any distinct
+    /// single candidate AND no distinct combination of candidates sums to it, Bundle()
+    /// throws an InvalidOperationException naming the amount — it never returns a result
+    /// with amounts quietly missing or silently shared.
     /// </summary>
     public BundleResult Bundle(IEnumerable<decimal> amounts)
     {
@@ -251,8 +200,8 @@ public sealed class LadderCombinator
             }
 
             // No single candidate worked (either none exist for this exact amount, or every
-            // one conflicts with an already-locked symbol) — search for a SUBSET of
-            // candidates across DIFFERENT symbols whose amounts sum to the target exactly.
+            // one would reuse an already-consumed symbol) — search for a SUBSET of
+            // candidates across unused DIFFERENT symbols whose amounts sum to the target exactly.
             // No cap on how many symbols may combine. When multiple valid combinations
             // exist, one is picked uniformly at random among all of them.
             if (winningCombo == null)
@@ -265,8 +214,7 @@ public sealed class LadderCombinator
             if (winningCombo == null)
                 throw new InvalidOperationException(
                     $"${amount} cannot be reached — no single symbol/tier matches it exactly, " +
-                    "and no combination of symbols/tiers (respecting symbols already locked by " +
-                    "other amounts in this bundle) sums to it either.");
+                    "and no distinct combination of unused symbols/tiers sums to it either.");
 
             // Apply the whole winning combination atomically.
             foreach (var c in winningCombo)
@@ -293,15 +241,15 @@ public sealed class LadderCombinator
     }
 
     /// <summary>
-    /// Try every candidate in the given pool, in order, returning the first one that's
-    /// usable: either a brand new symbol, or a symbol already locked at this EXACT same
-    /// tier (free sharing). Does not mutate the bundle — callers apply the result themselves.
+    /// Try every candidate in the given pool, in order, returning the first brand-new
+    /// symbol. A requested prize amount must consume a distinct symbol/tier entry; we
+    /// never silently share an already-used symbol/tier for a second prize.
     /// </summary>
     private static LadderCandidate? TryPick(Dictionary<int, BundleEntry> bySym, List<LadderCandidate> pool)
     {
         foreach (var candidate in pool)
         {
-            if (!bySym.TryGetValue(candidate.Sym, out var existing) || existing.Tier == candidate.Tier)
+            if (!bySym.ContainsKey(candidate.Sym))
                 return candidate;
         }
         return null;
@@ -309,23 +257,24 @@ public sealed class LadderCombinator
 
     /// <summary>
     /// Search for every combination of candidates — at most ONE candidate per symbol,
-    /// each either a brand-new symbol or reusing an already-locked symbol at its EXACT
-    /// locked tier — whose amounts sum exactly to the target. Explores every symbol's
+    /// and only symbols not already used by previous requested prize amounts — whose
+    /// amounts sum exactly to the target. Explores every symbol's
     /// tier options (including "don't use this symbol at all") via bounded recursion;
     /// with a handful of symbols and a few tiers each, the search space stays tiny.
     /// Returns every valid combination found, so the caller can pick one at random.
     /// </summary>
     private List<List<LadderCandidate>> FindSumCombinations(decimal target, Dictionary<int, BundleEntry> bySym)
     {
-        // Group every candidate across the WHOLE table by symbol, restricted to only the
-        // tier(s) that are actually usable given what's already locked.
+        // Group every candidate across the WHOLE table by symbol, excluding symbols
+        // already consumed by prior requested prize amounts.
         var bySymbolOptions = new List<List<LadderCandidate>>();
         foreach (var symGroup in _rows.Select((row, i) => (Sym: i + 1, Row: row)))
         {
+            if (bySym.ContainsKey(symGroup.Sym)) continue;
+
             var options = new List<LadderCandidate>();
             for (int tier = 0; tier < symGroup.Row.Tiers.Count; tier++)
             {
-                if (bySym.TryGetValue(symGroup.Sym, out var locked) && locked.Tier != tier) continue;
                 options.Add(new LadderCandidate
                 {
                     Sym = symGroup.Sym, Target = symGroup.Row.Target, Tier = tier,
