@@ -10,7 +10,7 @@ internal static class K
     internal const int COLS       = 5;
     internal const int MIN_PUSH   = 1;    // minimum rows collected per column per spin
     internal const int MAX_PUSH   = 3;    // maximum rows collected per column per spin
-    internal const int FILL_CAP   = 20;   // filler over-collection guard
+    internal const int FILL_CAP   = 19;   // filler over-collection guard
 
     // Every ticket's baseline spin count is fixed at 5 — this is never computed or
     // clamped by capacity math. The only way to exceed it is to plan for and award

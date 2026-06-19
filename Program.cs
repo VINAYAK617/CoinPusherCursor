@@ -13,12 +13,12 @@ var rows = new List<PrizeLadderRow>
     new() { Target = 30, Tiers = new decimal[] { 10000 } },
 };
 
-var bundle = new LadderCombinator(rows).Bundle(new decimal[] { 45 });
+var bundle = new LadderCombinator(rows).Bundle(new decimal[] { 500});
 Console.WriteLine($"Covered: [${string.Join(",",bundle.Covered.Select(a=>$"${a}"))}]");
 Console.WriteLine($"Entries: [{string.Join(";",bundle.Entries.Select(e=>$"sym{e.Sym}@tier{e.Tier}"))}]");
 Console.WriteLine($"Targets: [{string.Join(",",bundle.Input.Targets.Select(kv=>$"sym{kv.Key}={kv.Value}"))}]");
 Console.WriteLine($"BaseSpins: {bundle.Input.BaseSpins}");
 
-var plan = new Planner(bundle.Input, seed: 0).Plan();
+var plan = new Planner(bundle.Input, seed: null).Plan();
 var json = TicketSerializer.ToJson(plan);
 Console.WriteLine(json);

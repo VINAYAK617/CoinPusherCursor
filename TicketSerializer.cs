@@ -1,7 +1,6 @@
-using System.Text.Json;
 using System.Linq;
 using System.Collections.Generic;
-
+using Newtonsoft.Json;
 namespace CoinPusherEngine;
 
 /// <summary>
@@ -123,7 +122,12 @@ public static class TicketSerializer
 
     /// <summary>Serialize a verified GamePlan straight to an indented JSON string.</summary>
     public static string ToJson(GamePlan plan) =>
-        JsonSerializer.Serialize(ToTicketObject(plan), new JsonSerializerOptions { WriteIndented = true });
+        JsonConvert.SerializeObject(ToTicketObject(plan), new JsonSerializerSettings
+        {
+            Formatting = Formatting.Indented,
+            NullValueHandling = NullValueHandling.Ignore,
+            DefaultValueHandling = DefaultValueHandling.Ignore
+        });
 
     // ── Turn / spawn assembly ───────────────────────────────────────────────────
 
