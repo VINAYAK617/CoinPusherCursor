@@ -37,14 +37,16 @@ public sealed class Planner
         // choosing them first by structural need, then by probability.
         var effectiveInp = ResolveFeatures(winSyms, fillSyms.Count, log);
 
-        // ── Decorative budget ─────────────────────────────────────────────
-        // Let win symbols also appear as board filler (same-spin zone placement,
-        // guaranteed collected). Budget is small (0 or 1 per symbol) to keep
-        // the filler-cap arithmetic safe; Scheduler is given reduced targets and
-        // the gap is made up by decorative placements in FillZone.
-        var decorBudget    = ChooseDecorativeBudget(effectiveInp.Targets);
-        var reducedTargets = effectiveInp.Targets.ToDictionary(
-            kv => kv.Key, kv => kv.Value - decorBudget.GetValueOrDefault(kv.Key, 0));
+        // ── Exact-count scheduling ────────────────────────────────────────
+        // Every requested target is scheduled as an actual win. Earlier versions
+        // subtracted a small "decorative" win-symbol budget here and asked Builder
+        // to place those missing cells opportunistically in spare zone capacity.
+        // That made some seeds finish short by one when a decorative cell could not
+        // be placed safely (usually around WHEEL isolation). Keeping the decorative
+        // budget disabled preserves the invariant that Scheduler owns the full count
+        // for every win symbol, so Verifier failures are not caused by optional art.
+        var decorBudget    = new Dictionary<int, int>();
+        var reducedTargets = effectiveInp.Targets.ToDictionary(kv => kv.Key, kv => kv.Value);
         var schedulingInp  = new MathInput
         {
             Targets       = reducedTargets,
@@ -128,6 +130,7 @@ public sealed class Planner
 
         int physWins = CapacityModel.PhysicalWins(_inp.Targets, 0);
         int spins    = _inp.BaseSpins;   // never clamped — BaseSpins is fixed at 5 by design
+        int tokenLoad = RequiredTokenLoad(_inp.Required);
         int wheels   = 0, flushes = 0, extras = 0;
 
         // ── 1. WHEEL ──────────────────────────────────────────────────────
@@ -147,11 +150,12 @@ public sealed class Planner
             int physNew = zone + Math.Max(0, tgt - zone * stack);
             if (physNew >= tgt) continue;  // no compression benefit
 
-            bool needed = CapacityModel.MinExtraSpins(physWins, fillSymCount, spins) < 0;
+            bool needed = CapacityModel.MinExtraSpins(physWins, fillSymCount, spins, tokenLoad) < 0;
             bool lucky  = !needed && _rng.NextDouble() < P_WHEEL && tgt >= 10;
             if (needed || lucky)
             {
                 wheels++;
+                tokenLoad++;
                 physWins = physWins - tgt + physNew;
             }
         }
@@ -163,7 +167,7 @@ public sealed class Planner
         int maxFlush = K.COLS - 1;
         for (int f = 0; f < maxFlush; f++)
         {
-            bool needed = CapacityModel.MinExtraSpins(physWins, fillSymCount, spins) < 0;
+            bool needed = CapacityModel.MinExtraSpins(physWins, fillSymCount, spins, tokenLoad) < 0;
             bool lucky  = !needed && _rng.NextDouble() < P_FLUSH;
             if (needed || lucky) flushes++;
             else break;
@@ -182,7 +186,7 @@ public sealed class Planner
         // a chance; if it's still -1 here, the bundle genuinely cannot be built within
         // this game's symbol/filler configuration and the caller's retry loop (or the
         // bundle itself) needs to change, not this method.
-        int minExtras = CapacityModel.MinExtraSpins(physWins, fillSymCount, spins);
+        int minExtras = CapacityModel.MinExtraSpins(physWins, fillSymCount, spins, tokenLoad);
         extras = Math.Max(0, minExtras);   // -1 (infeasible) clamps to 0; nothing more we can do here
 
         bool changed = wheels > 0 || flushes > 0 || extras > 0;
@@ -195,7 +199,7 @@ public sealed class Planner
 
         log.Add($"features: wheels={wheels} flushes={flushes} extra={extras}" +
                 $" baseSpins={spins} totalSpins={spins + extras} physWins={physWins}" +
-                $" feasible={CapacityModel.IsFeasible(physWins, spins + extras, fillSymCount)}");
+                $" feasible={CapacityModel.IsFeasible(physWins, spins + extras, fillSymCount, tokenLoad: tokenLoad + extras)}");
 
         return new MathInput
         {
@@ -208,16 +212,9 @@ public sealed class Planner
         };
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // DECORATIVE BUDGET
-    // ═══════════════════════════════════════════════════════════════════════
-    private Dictionary<int, int> ChooseDecorativeBudget(IReadOnlyDictionary<int, int> targets)
-    {
-        var budget = new Dictionary<int, int>();
-        foreach (var (sym, target) in targets)
-            budget[sym] = (target >= 10) ? _rng.Next(0, 2) : 0;  // 0 or 1
-        return budget;
-    }
+    private static int RequiredTokenLoad(IReadOnlyDictionary<string, int> required) =>
+        required.Where(kv => FeatReg.Has(kv.Key) && FeatReg.Get(kv.Key).HasToken)
+                .Sum(kv => kv.Value);
 
     // ═══════════════════════════════════════════════════════════════════════
     // VALIDATION

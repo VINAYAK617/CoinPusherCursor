@@ -9,12 +9,14 @@ namespace CoinPusherEngine;
 ///   WHEEL compresses win footprint → fewer physical cells for the same target
 ///
 /// THE BINDING CONSTRAINT — filler capacity:
-///   total_collected = dense_spins × denseVol + light_spins × FloorVol
+///   total_collected = S×FloorVol + dense_spins×(denseVol − FloorVol)
 ///   filler_collected = total_collected − physWins
 ///   filler_collected ≤ fillSymCount × FILL_CAP   (filler budget)
 ///
 ///   Solving for max allowable dense spins given S total spins:
 ///     denseAllowed = floor((physWins + fillerBudget − S×FloorVol) / (denseVol − FloorVol))
+///   Solving for min required dense spins:
+///     denseNeeded = ceil(max(0, physWins + tokenLoad − S×FloorVol) / (denseVol − FloorVol))
 ///
 /// COUNTER-INTUITIVE: more spins WORSENS feasibility when filler budget is tight.
 /// Every extra spin adds FloorVol(=5) cells of minimum filler even at MIN_PUSH.
@@ -66,16 +68,17 @@ internal static class CapacityModel
     /// volume within fillSymCount × FILL_CAP.
     /// </summary>
     internal static bool IsFeasible(int physWins, int totalSpins, int fillSymCount,
-                                     int denseVol = NormalVol)
+                                     int denseVol = NormalVol, int tokenLoad = 0)
     {
-        if (physWins > totalSpins * denseVol) return false;
+        int load = physWins + tokenLoad;
+        if (load > totalSpins * denseVol) return false;
         // Safety margin: the Verifier rejects count >= FILL_CAP (strict less-than).
         // Round-robin splitting across fillSymCount symbols is nearly even but not
         // perfectly guaranteed, so we require total filler to be safely below
         // fillSymCount × FILL_CAP rather than exactly equal — 2 cells of headroom
         // per filler symbol.
         int fillerBudget = fillSymCount * (K.FILL_CAP - 2);
-        int denseNeeded  = DenseSpinsNeeded(physWins, denseVol);
+        int denseNeeded  = DenseSpinsNeeded(load, totalSpins, denseVol);
         return denseNeeded <= DenseSpinsAllowed(physWins, totalSpins, fillerBudget, denseVol);
     }
 
@@ -93,18 +96,26 @@ internal static class CapacityModel
     /// this always checks against whatever baseline is actually in play, never a
     /// hardcoded assumption.
     /// </summary>
-    internal static int MinExtraSpins(int physWins, int fillSymCount, int baseSpins = K.BASE_SPINS)
+    internal static int MinExtraSpins(int physWins, int fillSymCount,
+                                      int baseSpins = K.BASE_SPINS, int tokenLoad = 0)
     {
         int maxExtras = Math.Max(0, K.MAX_SPINS - baseSpins);
         for (int extras = 0; extras <= maxExtras; extras++)
-            if (IsFeasible(physWins, baseSpins + extras, fillSymCount))
+            if (IsFeasible(physWins, baseSpins + extras, fillSymCount,
+                           tokenLoad: tokenLoad + extras))
                 return extras;
         return -1;
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────
-    private static int DenseSpinsNeeded(int physWins, int denseVol) =>
-        (int)Math.Ceiling((double)physWins / denseVol);
+    private static int DenseSpinsNeeded(int load, int totalSpins, int denseVol)
+    {
+        int den = denseVol - FloorVol;
+        if (den <= 0) return load <= totalSpins * FloorVol ? 0 : int.MaxValue;
+
+        int aboveFloor = load - totalSpins * FloorVol;
+        return aboveFloor <= 0 ? 0 : (int)Math.Ceiling((double)aboveFloor / den);
+    }
 
     private static int DenseSpinsAllowed(int physWins, int totalSpins,
                                           int fillerBudget, int denseVol)
