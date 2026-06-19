@@ -10,7 +10,8 @@ namespace CoinPusherEngine;
 ///     Turns: [ { Pushers: [...], Spawns: [{Pos,Id,...}] }, ... ] }
 ///
 /// Feature object shapes:
-///   WHEEL         -> { FeatureId, ConvertToId, WheelSymbolId, WheelStackMultiplier }
+///   WHEEL         -> { FeatureId, ConvertToId, WheelSymbolId, WheelStackValue }
+///                    WheelStackValue is bonus N; collected value is 1 + N.
 ///   EXTRA_SPIN    -> { FeatureId, ConvertToId, ReTrigger: [...] }
 ///   PRIZE_UPGRADE -> { FeatureId, ConvertToId, UpgradeSymbolId, UpgradePrizeValue }
 ///
@@ -229,7 +230,9 @@ public static class TicketSerializer
                     FeatureId = c.Sym,
                     ConvertToId = cvt,
                     WheelSymbolId = c.Fp?.WheelSym ?? 0,
-                    WheelStackValue = c.Fp?.WheelStack ?? 0
+                    // Public JSON uses bonus semantics: N means a collected cell counts
+                    // as 1 + N. Internally Fp.WheelStack stores the total stack value.
+                    WheelStackValue = Math.Max(0, (c.Fp?.WheelStack ?? 1) - 1)
                 }
             },
             K.F_XSPIN => new SpawnDto
