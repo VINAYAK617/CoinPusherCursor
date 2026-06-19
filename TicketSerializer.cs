@@ -1,17 +1,19 @@
 using System.Text.Json;
+using System.Linq;
+using System.Collections.Generic;
 
 namespace CoinPusherEngine;
 
 /// <summary>
 /// Converts a verified GamePlan into the ticket JSON structure the front end consumes:
-///   { winInfo: { totalSpins, winSymbols, nonWinSymbols, prizeTiers },
-///     startingBoard: [5x5 of {id}],
-///     turns: [ { pushers: [...], spawns: [{Pos,id,...}] }, ... ] }
+///   { WinInfo: { TotalSpins, WinSymbols, NonWinSymbols, PrizeTiers },
+///     StartingBoard: [5x5 of {Id}],
+///     Turns: [ { Pushers: [...], Spawns: [{Pos,Id,...}] }, ... ] }
 ///
 /// Feature object shapes:
-///   WHEEL         -> { featureId, convertToId, wheelSymbolId, wheelStackMultiplier }
-///   EXTRA_SPIN    -> { featureId, convertToId, ReTrigger: [...] }
-///   PRIZE_UPGRADE -> { featureId, convertToId, upgradeSymbolId, upgradePrizeValue }
+///   WHEEL         -> { FeatureId, ConvertToId, WheelSymbolId, WheelStackMultiplier }
+///   EXTRA_SPIN    -> { FeatureId, ConvertToId, ReTrigger: [...] }
+///   PRIZE_UPGRADE -> { FeatureId, ConvertToId, UpgradeSymbolId, UpgradePrizeValue }
 ///
 /// ReTrigger chaining: when MULTIPLE EXTRA_SPIN tokens exist across a ticket, only the
 /// FIRST is kept as a real spawn entry — every subsequent one is folded into a nested
@@ -23,28 +25,81 @@ namespace CoinPusherEngine;
 /// </summary>
 public static class TicketSerializer
 {
+    // DTO models
+    public class TicketDto
+    {
+        public WinInfoDto WinInfo { get; set; } = null!;
+        public BoardCellDto[][] StartingBoard { get; set; } = null!;
+        public TurnDto[] Turns { get; set; } = null!;
+    }
+
+    public class WinInfoDto
+    {
+        public int TotalSpins { get; set; }
+        public WinSymbolDto[] WinSymbols { get; set; } = null!;
+        public NonWinSymbolDto[] NonWinSymbols { get; set; } = null!;
+        public PrizeTierDto[] PrizeTiers { get; set; } = null!;
+    }
+
+    public class WinSymbolDto { public int Id { get; set; } public int Target { get; set; } }
+    public class NonWinSymbolDto { public int Id { get; set; } public int MinTarget { get; set; } public int MaxThreshold { get; set; } }
+    public class PrizeTierDto { public int SymId { get; set; } public int Tier { get; set; } }
+
+    public class BoardCellDto { public int Id { get; set; } }
+
+    public class TurnDto
+    {
+        public PusherDto[] Pushers { get; set; } = null!;
+        public SpawnDto[] Spawns { get; set; } = null!;
+    }
+
+    public class PusherDto
+    {
+        public int PushValue { get; set; }
+        public int? FeatureId { get; set; }
+    }
+
+    public class SpawnDto
+    {
+        public int Pos { get; set; }
+        public int Id { get; set; }
+        public int? Stack { get; set; }
+        public FeatureDto? Feature { get; set; }
+    }
+
+    public class FeatureDto
+    {
+        public int FeatureId { get; set; }
+        public int ConvertToId { get; set; }
+        public int? WheelSymbolId { get; set; }
+        public int? WheelStackMultiplier { get; set; }
+        public int? UpgradeSymbolId { get; set; }
+        public decimal? UpgradePrizeValue { get; set; }
+        public FeatureDto[] ReTrigger { get; set; } = System.Array.Empty<FeatureDto>();
+    }
+
     /// <summary>Build the plain object graph (no JSON string yet) for a verified GamePlan.</summary>
-    public static object ToTicketObject(GamePlan plan)
+    public static TicketDto ToTicketObject(GamePlan plan)
     {
         var board = plan.Spins[0].Board;
         var startingBoard = Enumerable.Range(0, K.ROWS).Select(r =>
-            Enumerable.Range(0, K.COLS).Select(c => (object)new { id = board[r, c]?.Sym ?? 0 }).ToArray()
+            Enumerable.Range(0, K.COLS).Select(c => new BoardCellDto { Id = board[r, c]?.Sym ?? 0 }).ToArray()
         ).ToArray();
 
-        return new
+        return new TicketDto
         {
-            winInfo = new
+            WinInfo = new WinInfoDto
             {
-                totalSpins = plan.TotalSpins,
-                winSymbols = plan.Targets.OrderBy(kv => kv.Key)
-                                 .Select(kv => new { id = kv.Key, target = kv.Value }).ToArray(),
-                nonWinSymbols = plan.NonWinTargets.OrderBy(kv => kv.Key)
-                                 .Select(kv => new { id = kv.Key, minTarget = kv.Value, maxThreshold = K.FILL_CAP }).ToArray(),
-                prizeTiers = plan.PrizeTiers.OrderBy(kv => kv.Key)
-                                 .Select(kv => new { symId = kv.Key, tier = kv.Value }).ToArray()
+                TotalSpins = plan.TotalSpins,
+                WinSymbols = plan.Targets.OrderBy(kv => kv.Key)
+                                 .Select(kv => new WinSymbolDto { Id = kv.Key, Target = kv.Value }).ToArray(),
+                NonWinSymbols = plan.NonWinTargets.OrderBy(kv => kv.Key)
+                                 .Select(kv => new NonWinSymbolDto { Id = kv.Key, MinTarget = kv.Value, MaxThreshold = K.FILL_CAP }).ToArray(),
+                PrizeTiers = plan.PrizeTiers.OrderBy(kv => kv.Key)
+                                 .Select(kv => new PrizeTierDto { SymId = kv.Key, Tier = kv.Value }).ToArray()
             },
-            startingBoard,
-            turns = BuildTurns(plan)
+            StartingBoard = startingBoard,
+            Turns = BuildTurns(plan)
         };
     }
 
@@ -54,7 +109,7 @@ public static class TicketSerializer
 
     // ── Turn / spawn assembly ───────────────────────────────────────────────────
 
-    private static object[] BuildTurns(GamePlan plan)
+    private static TurnDto[] BuildTurns(GamePlan plan)
     {
         var allXSpinTokens = plan.Spins
             .SelectMany(sp => sp.Spawns
@@ -74,29 +129,30 @@ public static class TicketSerializer
             suppressed.Add(key);
         }
 
-        object? nested = null;
+        FeatureDto? nested = null;
         for (int i = allXSpinTokens.Count - 1; i >= 1; i--)
         {
             var cell = allXSpinTokens[i].Cell;
             int cvt  = cell.CvtSym > 0 ? cell.CvtSym : K.F_COIN;
-            nested = new
+            var f = new FeatureDto
             {
-                featureId   = K.F_XSPIN,
-                convertToId = cvt,
-                ReTrigger   = nested is null ? Array.Empty<object>() : new[] { nested }
+                FeatureId = K.F_XSPIN,
+                ConvertToId = cvt,
+                ReTrigger = nested is null ? System.Array.Empty<FeatureDto>() : new[] { nested }
             };
+            nested = f;
         }
 
-        var turns = new List<object>();
+        var turns = new List<TurnDto>();
         foreach (var sp in plan.Spins)
         {
             var pushers = Enumerable.Range(0, K.COLS).Select(c =>
                 sp.Flush[c]
-                    ? (object)new { pushValue = K.ROWS, featureId = K.F_FLUSH_ID }
-                    : (object)new { pushValue = sp.Push[c] }
+                    ? new PusherDto { PushValue = K.ROWS, FeatureId = K.F_FLUSH_ID }
+                    : new PusherDto { PushValue = sp.Push[c], FeatureId = null }
             ).ToArray();
 
-            var spawns = new List<object>();
+            var spawns = new List<SpawnDto>();
             foreach (var kv in sp.Spawns.OrderBy(kv => kv.Key.Item1 * K.COLS + kv.Key.Item2))
             {
                 var posKey = (sp.Spin, kv.Key);
@@ -108,11 +164,16 @@ public static class TicketSerializer
                 {
                     var c   = kv.Value;
                     int cvt = c.CvtSym > 0 ? c.CvtSym : K.F_COIN;
-                    spawns.Add(new
+                    spawns.Add(new SpawnDto
                     {
                         Pos = pos,
-                        id  = c.Sym,
-                        feature = new { featureId = K.F_XSPIN, convertToId = cvt, ReTrigger = new[] { nested } }
+                        Id = c.Sym,
+                        Feature = new FeatureDto
+                        {
+                            FeatureId = K.F_XSPIN,
+                            ConvertToId = cvt,
+                            ReTrigger = new[] { nested }
+                        }
                     });
                     continue;
                 }
@@ -120,32 +181,63 @@ public static class TicketSerializer
                 spawns.Add(SpawnObj(kv.Value, pos, plan));
             }
 
-            turns.Add(new { pushers, spawns = spawns.ToArray() });
+            turns.Add(new TurnDto { Pushers = pushers, Spawns = spawns.ToArray() });
         }
 
         return turns.ToArray();
     }
 
-    private static object SpawnObj(Cell c, int pos, GamePlan plan)
+    private static SpawnDto SpawnObj(Cell c, int pos, GamePlan plan)
     {
         if (!c.IsFeat)
             return c.Stack > 1
-                ? (object)new { Pos = pos, id = c.Sym, stack = c.Stack }
-                : (object)new { Pos = pos, id = c.Sym };
+                ? new SpawnDto { Pos = pos, Id = c.Sym, Stack = c.Stack }
+                : new SpawnDto { Pos = pos, Id = c.Sym };
 
         int cvt = c.CvtSym > 0 ? c.CvtSym : K.F_COIN;
         return c.Sym switch
         {
-            K.F_WHEEL => (object)new { Pos = pos, id = c.Sym, feature = new {
-                featureId = c.Sym, convertToId = cvt,
-                wheelSymbolId = c.Fp?.WheelSym ?? 0, wheelStackMultiplier = c.Fp?.WheelStack ?? 0 } },
-            K.F_XSPIN => (object)new { Pos = pos, id = c.Sym, feature = new {
-                featureId = c.Sym, convertToId = cvt, ReTrigger = Array.Empty<object>() } },
-            K.F_PRUP  => (object)new { Pos = pos, id = c.Sym, feature = new {
-                featureId = c.Sym, convertToId = cvt,
-                upgradeSymbolId = c.Fp?.PrupSym ?? 0,
-                upgradePrizeValue = PrizeValueFor(plan, c.Fp?.PrupSym ?? 0, c.Fp?.PrupTier ?? 0) } },
-            _ => (object)new { Pos = pos, id = c.Sym, feature = new { featureId = c.Sym, convertToId = cvt } }
+            K.F_WHEEL => new SpawnDto
+            {
+                Pos = pos,
+                Id = c.Sym,
+                Feature = new FeatureDto
+                {
+                    FeatureId = c.Sym,
+                    ConvertToId = cvt,
+                    WheelSymbolId = c.Fp?.WheelSym ?? 0,
+                    WheelStackMultiplier = c.Fp?.WheelStack ?? 0
+                }
+            },
+            K.F_XSPIN => new SpawnDto
+            {
+                Pos = pos,
+                Id = c.Sym,
+                Feature = new FeatureDto
+                {
+                    FeatureId = c.Sym,
+                    ConvertToId = cvt,
+                    ReTrigger = System.Array.Empty<FeatureDto>()
+                }
+            },
+            K.F_PRUP => new SpawnDto
+            {
+                Pos = pos,
+                Id = c.Sym,
+                Feature = new FeatureDto
+                {
+                    FeatureId = c.Sym,
+                    ConvertToId = cvt,
+                    UpgradeSymbolId = c.Fp?.PrupSym ?? 0,
+                    UpgradePrizeValue = PrizeValueFor(plan, c.Fp?.PrupSym ?? 0, c.Fp?.PrupTier ?? 0)
+                }
+            },
+            _ => new SpawnDto
+            {
+                Pos = pos,
+                Id = c.Sym,
+                Feature = new FeatureDto { FeatureId = c.Sym, ConvertToId = cvt }
+            }
         };
     }
 
