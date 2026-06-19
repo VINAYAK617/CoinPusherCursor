@@ -287,13 +287,7 @@ internal sealed class Builder
             ? freeCols * K.MIN_PUSH
             : Math.Clamp(total - flushCols.Count * K.ROWS, freeCols * K.MIN_PUSH, freeCols * K.MAX_PUSH);
 
-        int[] pv   = Enumerable.Repeat(K.MIN_PUSH, freeCols).ToArray();
-        int   left = needed - freeCols * K.MIN_PUSH;
-        for (int i = 0; i < freeCols && left > 0; i++)
-        {
-            int add = Math.Min(K.MAX_PUSH - K.MIN_PUSH, left);
-            pv[i] += add; left -= add;
-        }
+        int[] pv = MakeVariedPushValues(freeCols, needed);
 
         var push  = new int[K.COLS];
         var flush = new bool[K.COLS];
@@ -304,6 +298,44 @@ internal sealed class Builder
             else push[col] = pv[fi++];
         }
         return (push, flush);
+    }
+
+    private int[] MakeVariedPushValues(int freeCols, int needed)
+    {
+        if (freeCols <= 0) return Array.Empty<int>();
+
+        int minTotal = freeCols * K.MIN_PUSH;
+        int maxTotal = freeCols * K.MAX_PUSH;
+        int targetTotal = Math.Clamp(needed, minTotal, maxTotal);
+
+        var pv = Enumerable.Repeat(K.MIN_PUSH, freeCols).ToArray();
+        int left = targetTotal - minTotal;
+        while (left > 0)
+        {
+            bool placed = false;
+            foreach (int idx in Enumerable.Range(0, freeCols).OrderBy(_ => _rng.Next()))
+            {
+                if (left == 0) break;
+                if (pv[idx] >= K.MAX_PUSH) continue;
+                pv[idx]++;
+                left--;
+                placed = true;
+            }
+            if (!placed) break;
+        }
+
+        // Same total, better shape: turn [2,2,2,2,2] into something like
+        // [3,2,2,2,1] when possible. This keeps capacity unchanged.
+        if (pv.Distinct().Count() == 1 && pv[0] > K.MIN_PUSH && pv[0] < K.MAX_PUSH)
+        {
+            int hi = _rng.Next(freeCols);
+            int lo;
+            do { lo = _rng.Next(freeCols); } while (lo == hi);
+            pv[hi]++;
+            pv[lo]--;
+        }
+
+        return pv;
     }
 
     private static FP MakeFP(PlacedFeat f)
