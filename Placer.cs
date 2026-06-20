@@ -2,10 +2,10 @@ namespace CoinPusherEngine;
 
 internal sealed class Placer
 {
-    private readonly MathInput    _inp;
-    private readonly Random       _rng;
+    private readonly MathInput _inp;
+    private readonly Random _rng;
     private readonly List<string> _log;
-    private const    int          Tries = 400;
+    private const int Tries = 400;
 
     internal Placer(MathInput inp, Random rng, List<string> log)
     { _inp = inp; _rng = rng; _log = log; }
@@ -27,8 +27,8 @@ internal sealed class Placer
         foreach (var id in FeatReg.Ordered)
         {
             var (_, maxInst, minS, maxS, _) = FeatReg.Cfg[id];
-            int req     = _inp.Required.GetValueOrDefault(id, 0);
-            int limit   = req > 0 ? req : maxInst;
+            int req = _inp.Required.GetValueOrDefault(id, 0);
+            int limit = req > 0 ? req : maxInst;
             double prob = FeatReg.Cfg[id].P;
             int capSpin = Math.Min(maxS, totalSpinsKnown - 1);
 
@@ -73,16 +73,18 @@ internal sealed class Placer
         var feat = FeatReg.Get(id);
         int placed = 0;
 
-        for (int spin = minS; spin < maxS && placed < req; spin++)
-        for (int col = 0; col < K.COLS && placed < req; col++)
+        // Aim each successive token at an evenly-spaced target spin across the whole
+        // [minS, maxS) window, then search outward from that target for the nearest
+        // feasible, unused cell. A naive "scan from the start, take the first
+        // feasible cell" approach (what this used to do) always greedily fills the
+        // earliest spins first, regardless of scan direction — flooding one or two
+        // spins with every feature while later spins stay empty. Targeting a spread
+        // of preferred spins up front is what actually distributes placements across
+        // the full ticket, not just the order cells are visited in.
+        foreach (int target in EvenlySpreadSpins(minS, maxS, req))
         {
-            if (used.Contains((spin, col))) continue;
-
-            var r = feat.TryPlace(new PlaceCtx
-            {
-                Spin=spin, Col=col, Done=done, Rng=_rng,
-                Input=_inp, MaxSpin=maxS, MinSpin=minS, Used=used,
-            });
+            if (placed >= req) break;
+            var r = PlaceNearSpin(feat, target, minS, maxS, done, used);
             if (r == null) continue;
 
             done.Add(r);
@@ -100,19 +102,16 @@ internal sealed class Placer
         var feat = FeatReg.Get("PRIZE_UPGRADE");
         int placed = 0;
 
-        // PRIZE_UPGRADE tiers must be chronological per symbol. Scan spins in order
-        // and columns left-to-right so tier 1 is guaranteed to land before tier 2,
-        // instead of relying on random retries to discover a valid ordering.
-        for (int spin = minS; spin < maxS && placed < req; spin++)
-        for (int col = 0; col < K.COLS - 1 && placed < req; col++)
+        // Same even-spread + outward-search strategy as PlaceRequiredFeature (see its
+        // comment for the rationale). Chronological tier ordering per symbol (tier N
+        // must land after tier N-1) is enforced INSIDE PrupFeat.TryPlace itself, by
+        // checking each symbol's already-placed tokens — not by the order spins are
+        // tried in — so aiming at a spread-out target is safe: TryPlace simply
+        // rejects any candidate that would violate that ordering, exactly as before.
+        foreach (int target in EvenlySpreadSpins(minS, maxS, req))
         {
-            if (used.Contains((spin, col))) continue;
-
-            var r = feat.TryPlace(new PlaceCtx
-            {
-                Spin=spin, Col=col, Done=done, Rng=_rng,
-                Input=_inp, MaxSpin=maxS, MinSpin=minS, Used=used,
-            });
+            if (placed >= req) break;
+            var r = PlaceNearSpin(feat, target, minS, maxS, done, used, maxCol: K.COLS - 1);
             if (r == null) continue;
 
             done.Add(r);
@@ -124,6 +123,66 @@ internal sealed class Placer
         return placed;
     }
 
+    /// <summary>
+    /// Splits the half-open window [minS, maxS) into `count` equal slices and
+    /// returns the (rounded) center spin of each slice, in order — e.g. window
+    /// [1,8) with count=3 yields roughly [2, 5, 7]. Every preferred spin is clamped
+    /// back into [minS, maxS-1] in case rounding pushes it to an edge. Returns an
+    /// empty sequence if count <= 0.
+    /// </summary>
+    private static IEnumerable<int> EvenlySpreadSpins(int minS, int maxS, int count)
+    {
+        if (count <= 0) return Array.Empty<int>();
+        int window = Math.Max(1, maxS - minS);
+        var targets = new int[count];
+        for (int i = 0; i < count; i++)
+        {
+            int t = minS + (int)Math.Round((i + 0.5) * window / count);
+            targets[i] = Math.Clamp(t, minS, maxS - 1);
+        }
+        return targets;
+    }
+
+    /// <summary>
+    /// Searches outward from `target` (target, target+1, target-1, target+2, ...)
+    /// for the nearest spin within [minS, maxS) where `feat` can be placed in some
+    /// unused column (0..maxCol-1, scanned left to right at each candidate spin).
+    /// Returns null if no feasible cell exists anywhere in the window.
+    /// </summary>
+    private PlacedFeat? PlaceNearSpin(Feat feat, int target, int minS, int maxS,
+                                       List<PlacedFeat> done, HashSet<(int, int)> used,
+                                       int maxCol = K.COLS)
+    {
+        for (int offset = 0; offset <= maxS - minS; offset++)
+        {
+            foreach (int spin in offset == 0
+                         ? new[] { target }
+                         : new[] { target - offset, target + offset })
+            {
+                if (spin < minS || spin >= maxS) continue;
+
+                for (int col = 0; col < maxCol; col++)
+                {
+                    if (used.Contains((spin, col))) continue;
+
+                    var r = feat.TryPlace(new PlaceCtx
+                    {
+                        Spin = spin,
+                        Col = col,
+                        Done = done,
+                        Rng = _rng,
+                        Input = _inp,
+                        MaxSpin = maxS,
+                        MinSpin = minS,
+                        Used = used,
+                    });
+                    if (r != null) return r;
+                }
+            }
+        }
+        return null;
+    }
+
     private PlacedFeat? TryPlace(string id, int minS, int maxS,
                                   List<PlacedFeat> done, HashSet<(int, int)> used)
     {
@@ -131,11 +190,17 @@ internal sealed class Placer
         for (int a = 0; a < Tries; a++)
         {
             int spin = _rng.Next(minS, maxS + 1);
-            int col  = _rng.Next(0, K.COLS);
-            var r    = feat.TryPlace(new PlaceCtx
+            int col = _rng.Next(0, K.COLS);
+            var r = feat.TryPlace(new PlaceCtx
             {
-                Spin=spin, Col=col, Done=done, Rng=_rng,
-                Input=_inp, MaxSpin=maxS, MinSpin=minS, Used=used,
+                Spin = spin,
+                Col = col,
+                Done = done,
+                Rng = _rng,
+                Input = _inp,
+                MaxSpin = maxS,
+                MinSpin = minS,
+                Used = used,
             });
             if (r != null) return r;
         }

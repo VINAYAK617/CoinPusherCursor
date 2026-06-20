@@ -9,8 +9,8 @@ namespace CoinPusherEngine;
 public sealed class Planner
 {
     private readonly MathInput _inp;
-    private readonly int       _baseSeed;
-    private Random             _rng;
+    private readonly int _baseSeed;
+    private Random _rng;
     private static readonly Random SeedRng = new();
     private static readonly object SeedLock = new();
 
@@ -19,7 +19,7 @@ public sealed class Planner
     // the ticket is structurally infeasible without them.
     private const double P_WHEEL = 0.65;  // per eligible win symbol
     private const double P_FLUSH = 0.35;  // per optional FLUSH token
-    private const int    MaxPlanAttempts = 512;
+    private const int MaxPlanAttempts = 512;
 
     public Planner(MathInput inp, int? seed = null)
     {
@@ -60,10 +60,10 @@ public sealed class Planner
 
     private GamePlan PlanOnce()
     {
-        var log      = new List<string>();
-        var winSyms  = _inp.Targets.Keys.OrderBy(x => x).ToList();
+        var log = new List<string>();
+        var winSyms = _inp.Targets.Keys.OrderBy(x => x).ToList();
         var fillSyms = Enumerable.Range(1, _inp.MaxSym).Except(winSyms).ToList();
-        var winSet   = new HashSet<int>(winSyms);
+        var winSet = new HashSet<int>(winSyms);
         var nonWinTargets = ResolveNonWinTargets(fillSyms);
         var nonWinPrizeTiers = ResolveNonWinPrizeTiers(nonWinTargets);
 
@@ -80,41 +80,41 @@ public sealed class Planner
         // be placed safely (usually around WHEEL isolation). Keeping the decorative
         // budget disabled preserves the invariant that Scheduler owns the full count
         // for every win symbol, so Verifier failures are not caused by optional art.
-        var decorBudget    = new Dictionary<int, int>();
+        var decorBudget = new Dictionary<int, int>();
         var reducedTargets = effectiveInp.Targets.ToDictionary(kv => kv.Key, kv => kv.Value);
         var allocTargets = reducedTargets
             .Concat(nonWinTargets)
             .ToDictionary(kv => kv.Key, kv => kv.Value);
-        var schedulingInp  = new MathInput
+        var schedulingInp = new MathInput
         {
-            Targets       = allocTargets,
-            BaseSpins     = effectiveInp.BaseSpins,
-            Required      = effectiveInp.Required,
+            Targets = allocTargets,
+            BaseSpins = effectiveInp.BaseSpins,
+            Required = effectiveInp.Required,
             WheelSymOrder = effectiveInp.WheelSymOrder,
-            PrizeTiers    = effectiveInp.PrizeTiers,
-            PrizeValues   = effectiveInp.PrizeValues,
+            PrizeTiers = effectiveInp.PrizeTiers,
+            PrizeValues = effectiveInp.PrizeValues,
             NonWinTargets = nonWinTargets,
             NonWinPrizeTiers = nonWinPrizeTiers,
-            MaxSym        = effectiveInp.MaxSym,
+            MaxSym = effectiveInp.MaxSym,
         };
 
         log.Add($"wins=[{string.Join(",", winSyms)}] fills=[{string.Join(",", fillSyms)}]");
         if (nonWinTargets.Count > 0)
-            log.Add($"nonWins=[{string.Join(",", nonWinTargets.Select(kv=>$"sym{kv.Key}>={kv.Value}<cap{K.FILL_CAP}"))}]");
+            log.Add($"nonWins=[{string.Join(",", nonWinTargets.Select(kv => $"sym{kv.Key}>={kv.Value}<cap{K.FILL_CAP}"))}]");
         if (nonWinPrizeTiers.Count > 0)
-            log.Add($"nonWinPrizeUpgrades=[{string.Join(",", nonWinPrizeTiers.Select(kv=>$"sym{kv.Key}@tier{kv.Value}"))}]");
+            log.Add($"nonWinPrizeUpgrades=[{string.Join(",", nonWinPrizeTiers.Select(kv => $"sym{kv.Key}@tier{kv.Value}"))}]");
         if (decorBudget.Values.Any(b => b > 0))
-            log.Add($"decorBudget=[{string.Join(",", decorBudget.Where(kv=>kv.Value>0).Select(kv=>$"sym{kv.Key}={kv.Value}"))}]");
+            log.Add($"decorBudget=[{string.Join(",", decorBudget.Where(kv => kv.Value > 0).Select(kv => $"sym{kv.Key}={kv.Value}"))}]");
 
         // ── Build pipeline ────────────────────────────────────────────────
-        var placed      = new Placer(schedulingInp, _rng, log).Place();
-        int totalSpins  = effectiveInp.BaseSpins + placed.Count(f => f.Id == "EXTRA_SPIN");
-        var locks       = BuildLocks(placed, log, allocTargets);
-        var allocs      = new Scheduler(allocTargets, placed, locks, log).Schedule(totalSpins);
+        var placed = new Placer(schedulingInp, _rng, log).Place();
+        int totalSpins = effectiveInp.BaseSpins + placed.Count(f => f.Id == "EXTRA_SPIN");
+        var locks = BuildLocks(placed, log, allocTargets);
+        var allocs = new Scheduler(allocTargets, placed, locks, log).Schedule(totalSpins);
         var fillTracker = new FillTracker(fillSyms.ToArray());
-        var builder     = new Builder(allocTargets, locks, placed,
+        var builder = new Builder(allocTargets, locks, placed,
                                        fillSyms.ToArray(), log, _rng, fillTracker, decorBudget);
-        var spins       = builder.BuildAll(placed, allocs, totalSpins, effectiveInp.BaseSpins);
+        var spins = builder.BuildAll(placed, allocs, totalSpins, effectiveInp.BaseSpins);
 
         new Resolver(fillSyms.ToArray(), winSet, log, _rng, fillTracker).Resolve(spins);
 
@@ -126,15 +126,15 @@ public sealed class Planner
         var plan = new GamePlan
         {
             TotalSpins = totalSpins,
-            Targets    = effectiveInp.Targets,
-            WinSyms    = winSyms,
-            FillSyms   = fillSyms,
+            Targets = effectiveInp.Targets,
+            WinSyms = winSyms,
+            FillSyms = fillSyms,
             PrizeTiers = prizeTiers,
             PrizeValues = prizeValues,
             NonWinTargets = nonWinTargets,
             NonWinPrizeTiers = nonWinPrizeTiers,
-            Spins      = spins,
-            Log        = log,
+            Spins = spins,
+            Log = log,
         };
 
         Verifier.Check(plan);
@@ -191,11 +191,11 @@ public sealed class Planner
                                       IReadOnlyDictionary<int, int> nonWinPrizeTiers)
     {
         int physWins = CapacityModel.PhysicalWins(_inp.Targets, 0);
-        int spins    = _inp.BaseSpins;   // never clamped — BaseSpins is fixed at 5 by design
+        int spins = _inp.BaseSpins;   // never clamped — BaseSpins is fixed at 5 by design
         int plannedFillerLoad = nonWinTargets.Values.Sum();
         int nonWinPrupTokens = nonWinPrizeTiers.Values.Sum();
         int tokenLoad = RequiredTokenLoad(_inp.Required) + plannedFillerLoad + nonWinPrupTokens;
-        int wheels   = 0, nonWinWheels = 0, flushes = 0, extras = 0;
+        int wheels = 0, nonWinWheels = 0, flushes = 0, extras = 0;
         bool allowOptionalFeatures = !IsHighPressureTicket();
 
         if (_inp.Required.ContainsKey("WHEEL") || _inp.Required.ContainsKey("EXTRA_SPIN"))
@@ -211,15 +211,15 @@ public sealed class Planner
         var ordered = winSyms.OrderByDescending(s => _inp.Targets[s]).ToList();
         foreach (int sym in ordered)
         {
-            int tgt     = _inp.Targets[sym];
-            int n       = WMath.BestN(tgt);
-            int stack   = 1 << n;
-            int zone    = WMath.Zone(tgt, stack);
+            int tgt = _inp.Targets[sym];
+            int n = WMath.BestN(tgt);
+            int stack = 1 << n;
+            int zone = WMath.Zone(tgt, stack);
             int physNew = zone + Math.Max(0, tgt - zone * stack);
             if (physNew >= tgt) continue;  // no compression benefit
 
             bool needed = CapacityModel.MinExtraSpins(physWins, fillSymCount, spins, tokenLoad) < 0;
-            bool lucky  = allowOptionalFeatures && !needed && _rng.NextDouble() < P_WHEEL && tgt >= 10;
+            bool lucky = allowOptionalFeatures && !needed && _rng.NextDouble() < P_WHEEL && tgt >= 10;
             if (needed || lucky)
             {
                 wheels++;
@@ -249,7 +249,7 @@ public sealed class Planner
         for (int f = 0; f < maxFlush; f++)
         {
             bool needed = CapacityModel.MinExtraSpins(physWins, fillSymCount, spins, tokenLoad) < 0;
-            bool lucky  = allowOptionalFeatures && !needed && _rng.NextDouble() < P_FLUSH;
+            bool lucky = allowOptionalFeatures && !needed && _rng.NextDouble() < P_FLUSH;
             if (needed || lucky) flushes++;
             else break;
         }
@@ -274,9 +274,9 @@ public sealed class Planner
         if (!changed) return _inp;
 
         var merged = AddRequired(_inp.Required, "PRIZE_UPGRADE", nonWinPrupTokens);
-        if (wheels  > 0) merged["WHEEL"]      = wheels;
-        if (flushes > 0) merged["FLUSH"]       = flushes;
-        if (extras  > 0) merged["EXTRA_SPIN"]  = extras;
+        if (wheels > 0) merged["WHEEL"] = wheels;
+        if (flushes > 0) merged["FLUSH"] = flushes;
+        if (extras > 0) merged["EXTRA_SPIN"] = extras;
 
         log.Add($"features: wheels={wheels} nonWinWheels={nonWinWheels} flushes={flushes} extra={extras} nonWinPrup={nonWinPrupTokens}" +
                 $" baseSpins={spins} totalSpins={spins + extras} physWins={physWins}" +
@@ -287,15 +287,15 @@ public sealed class Planner
 
         return new MathInput
         {
-            Targets       = _inp.Targets,
-            BaseSpins     = spins,          // always _inp.BaseSpins, untouched
-            Required      = merged,
+            Targets = _inp.Targets,
+            BaseSpins = spins,          // always _inp.BaseSpins, untouched
+            Required = merged,
             WheelSymOrder = wheelOrder.Count > 0 ? wheelOrder : _inp.WheelSymOrder,
-            PrizeTiers    = prizeTiers.Count > 0 ? prizeTiers : null,
-            PrizeValues   = _inp.PrizeValues,
+            PrizeTiers = prizeTiers.Count > 0 ? prizeTiers : null,
+            PrizeValues = _inp.PrizeValues,
             NonWinTargets = _inp.NonWinTargets,
             NonWinPrizeTiers = _inp.NonWinPrizeTiers,
-            MaxSym        = _inp.MaxSym,
+            MaxSym = _inp.MaxSym,
         };
     }
 
@@ -343,15 +343,15 @@ public sealed class Planner
 
         return new MathInput
         {
-            Targets       = source.Targets,
-            BaseSpins     = source.BaseSpins,
-            Required      = required,
+            Targets = source.Targets,
+            BaseSpins = source.BaseSpins,
+            Required = required,
             WheelSymOrder = wheelOrder.Count > 0 ? wheelOrder : source.WheelSymOrder,
-            PrizeTiers    = prizeTiers.Count > 0 ? prizeTiers : null,
-            PrizeValues   = source.PrizeValues,
+            PrizeTiers = prizeTiers.Count > 0 ? prizeTiers : null,
+            PrizeValues = source.PrizeValues,
             NonWinTargets = source.NonWinTargets,
             NonWinPrizeTiers = source.NonWinPrizeTiers,
-            MaxSym        = source.MaxSym,
+            MaxSym = source.MaxSym,
         };
     }
 
@@ -379,10 +379,27 @@ public sealed class Planner
         if (_inp.NonWinTargets != null)
             return _inp.NonWinTargets.ToDictionary(kv => kv.Key, kv => kv.Value);
 
-        if (IsHighPressureTicket())
-            return new Dictionary<int, int>();
-
         if (fillSyms.Count == 0) return new Dictionary<int, int>();
+
+        // High-pressure tickets (many win symbols and/or heavy upgrade load) are
+        // already close to the edge of what fits in the filler budget, so the
+        // near-miss footprint is scaled DOWN here rather than disabled outright —
+        // a single small filler target, not several larger ones. The capacity math
+        // in ResolveFeatures (tokenLoad accounting, MinExtraSpins) is the actual
+        // safety net either way: if even this minimal footprint doesn't fit a given
+        // ticket, that check reports infeasible and the normal retry loop handles
+        // it, exactly as it already does for any other infeasible combination —
+        // this method is never the sole thing standing between a plan and overflow.
+        //
+        // The high-pressure target is fixed at 2, not 1: WMath.BestN/Zone can only
+        // produce a usable WHEEL lock when target/stack >= 1, which target=1 can
+        // never satisfy (it always zones to 0) — 2 is the smallest target that
+        // still lets WHEEL meaningfully apply to a near-miss symbol.
+        if (IsHighPressureTicket())
+        {
+            int sym = fillSyms[_rng.Next(fillSyms.Count)];
+            return new Dictionary<int, int> { { sym, 2 } };
+        }
 
         int count = _rng.Next(1, Math.Min(3, fillSyms.Count) + 1);
         int maxPerSymbol = Math.Min(3, K.FILL_CAP - 1);
@@ -398,10 +415,21 @@ public sealed class Planner
         if (_inp.NonWinPrizeTiers != null)
             return _inp.NonWinPrizeTiers.ToDictionary(kv => kv.Key, kv => kv.Value);
 
-        if (_inp.Required.GetValueOrDefault("PRIZE_UPGRADE") > 0)
-            return new Dictionary<int, int>();
-
-        var eligible = nonWinTargets.Keys.OrderBy(_ => _rng.Next()).ToList();
+        // Earlier versions skipped this entirely whenever the ticket already had
+        // ANY PRIZE_UPGRADE tokens for win symbols — but that's checking "does this
+        // ticket use upgrade tiers at all", not "is there capacity headroom for one
+        // more token". The two are unrelated: tokenLoad accounting in
+        // ResolveFeatures already counts a near-miss upgrade token additively
+        // alongside whatever win symbols need (see nonWinPrupTokens there), and
+        // MinExtraSpins is the real, capacity-aware gate on whether it actually fits
+        // a given ticket. That blanket check meant the most common, most interesting
+        // tickets (anything using real upgrade tiers) never showed a near-miss
+        // visual upgrade at all — removing it lets the existing capacity math do
+        // its job instead of pre-emptively assuming there's no room.
+        var eligible = nonWinTargets.Where(kv => kv.Value >= 1)
+                                     .Select(kv => kv.Key)
+                                     .OrderBy(_ => _rng.Next())
+                                     .ToList();
         if (eligible.Count == 0) return new Dictionary<int, int>();
 
         // One visual upgrade on a near-miss symbol gives the player the prize-upgrade
@@ -542,5 +570,3 @@ public sealed class Planner
         return locks;
     }
 }
-
-
