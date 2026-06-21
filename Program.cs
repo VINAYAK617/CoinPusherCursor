@@ -13,7 +13,7 @@ var rows = new List<PrizeLadderRow>
     new() { Target = 30, Tiers = new decimal[] { 10000 } },
 };
 
-var bundle = new LadderCombinator(rows).Bundle(new decimal[] { 1, 50});
+var bundle = new LadderCombinator(rows).Bundle(new decimal[] { 5,8,25,50});
 Console.WriteLine($"Covered: [${string.Join(",",bundle.Covered.Select(a=>$"${a}"))}]");
 Console.WriteLine($"Entries: [{string.Join(";",bundle.Entries.Select(e=>$"sym{e.Sym}@tier{e.Tier}"))}]");
 Console.WriteLine($"Targets: [{string.Join(",",bundle.Input.Targets.Select(kv=>$"sym{kv.Key}={kv.Value}"))}]");

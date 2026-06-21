@@ -470,7 +470,7 @@ public sealed class Planner
         }
 
         int fillerCount = _inp.MaxSym - _inp.Targets.Count;
-        if (fillerCount < 2)
+        if (fillerCount < 1)
             throw new ArgumentException(
                 $"Need at least 2 filler symbols; got {fillerCount} " +
                 $"({_inp.Targets.Count} win symbols in a {_inp.MaxSym}-symbol game).");
