@@ -433,16 +433,12 @@ public sealed class Planner
         // infeasible and the normal retry loop handles it, exactly as it
         // already does for any other infeasible combination.
         //
-        // High-pressure tickets (many win symbols and/or heavy upgrade load)
-        // get the SAME minimum but a single symbol and a narrower range, since
-        // they're already closer to the capacity edge — confirmed via stress
-        // testing that this remains reliably feasible at scale (see commit
-        // notes); the retry loop is the final word either way.
+        // High-pressure tickets already need the full board budget for guaranteed
+        // win delivery. Near-miss symbols are player-experience decoration, not a
+        // hard payout contract, so do not let them compete with required wins.
         if (IsHighPressureTicket())
         {
-            int sym = fillSyms[_rng.Next(fillSyms.Count)];
-            int target = _rng.Next(K.NONWIN_MIN_TARGET, K.NONWIN_MIN_TARGET + 3);
-            return new Dictionary<int, int> { { sym, target } };
+            return new Dictionary<int, int>();
         }
 
         int count = _rng.Next(1, Math.Min(3, fillSyms.Count) + 1);
