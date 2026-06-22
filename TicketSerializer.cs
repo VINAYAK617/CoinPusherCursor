@@ -140,11 +140,12 @@ public static class TicketSerializer
             .OrderBy(t => t.Spin)
             .ThenBy(t => t.Pos.Item1 * K.COLS + t.Pos.Item2)
             .ToList();
+        bool chainExtraSpins = ShouldChainExtraSpins(plan, allXSpinTokens);
 
         var chainStart = new HashSet<(int Spin, (int, int) Pos)>();
         var suppressed = new HashSet<(int Spin, (int, int) Pos)>();
 
-        for (int i = 0; i < allXSpinTokens.Count; i++)
+        for (int i = 0; chainExtraSpins && i < allXSpinTokens.Count; i++)
         {
             var key = (allXSpinTokens[i].Spin, allXSpinTokens[i].Pos);
             if (i == 0) { chainStart.Add(key); continue; }
@@ -160,7 +161,9 @@ public static class TicketSerializer
             var f = new FeatureDto
             {
                 FeatureId = K.F_XSPIN,
-                ConvertToId = hasRetrigger ? K.F_XSPIN : cvt,
+                ConvertToId = hasRetrigger
+                    ? ExtraSpinChainConvertId(cell, i)
+                    : cvt,
                 ReTrigger = hasRetrigger ? new[] { nested! } : System.Array.Empty<FeatureDto>()
             };
             nested = f;
@@ -199,7 +202,7 @@ public static class TicketSerializer
                         Feature = new FeatureDto
                         {
                             FeatureId = K.F_XSPIN,
-                            ConvertToId = K.F_XSPIN,
+                            ConvertToId = ExtraSpinChainConvertId(c, 0),
                             ReTrigger = new[] { nested }
                         }
                     });
@@ -213,6 +216,41 @@ public static class TicketSerializer
         }
 
         return turns.ToArray();
+    }
+
+    private static bool ShouldChainExtraSpins(
+        GamePlan plan,
+        IReadOnlyList<(int Spin, (int, int) Pos, Cell Cell)> extraSpinTokens)
+    {
+        if (extraSpinTokens.Count <= 1) return false;
+        var roll = DeterministicUnitInterval(plan.TotalSpins, extraSpinTokens[0].Spin, extraSpinTokens[0].Pos);
+        return roll < K.P_EXTRA_SPIN_RETRIGGER_CHAIN;
+    }
+
+    private static int ExtraSpinChainConvertId(Cell cell, int depth)
+    {
+        var ids = K.EXTRA_SPIN_RETRIGGER_CONVERT_IDS;
+        if (ids.Length == 0) return K.F_XSPIN;
+
+        var hash = cell.Sym;
+        hash = unchecked(hash * 397) ^ cell.CvtSym;
+        hash = unchecked(hash * 397) ^ depth;
+        hash = unchecked(hash * 397) ^ (cell.Fp?.PrupSym ?? 0);
+        return ids[(hash & 0x7fffffff) % ids.Length];
+    }
+
+    private static double DeterministicUnitInterval(int totalSpins, int spin, (int r, int c) pos)
+    {
+        unchecked
+        {
+            var hash = 17;
+            hash = hash * 31 + totalSpins;
+            hash = hash * 31 + spin;
+            hash = hash * 31 + pos.r;
+            hash = hash * 31 + pos.c;
+            var positive = hash & 0x7fffffff;
+            return positive / (double)int.MaxValue;
+        }
     }
 
     private static SpawnDto SpawnObj(Cell c, int pos, GamePlan plan)

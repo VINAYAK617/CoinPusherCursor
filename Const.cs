@@ -60,6 +60,25 @@ internal static class K
     /// turns the symbol into an actual payout target.</summary>
     internal const double P_NONWIN_PRIZE_UPGRADE = 1.0;
 
+    /// <summary>
+    /// Presentation-only chance that multiple EXTRA_SPIN tokens are folded into a
+    /// nested ReTrigger chain. When the roll misses, each EXTRA_SPIN remains a
+    /// normal board token and converts directly to filler.
+    /// </summary>
+    internal const double P_EXTRA_SPIN_RETRIGGER_CHAIN = 0.25;
+
+    /// <summary>
+    /// Visual feature ids that an EXTRA_SPIN chain link may appear to convert into
+    /// while pointing at its nested ReTrigger. This avoids every chain step looking
+    /// like it simply becomes another EXTRA_SPIN.
+    /// </summary>
+    internal static readonly int[] EXTRA_SPIN_RETRIGGER_CONVERT_IDS =
+    {
+        F_XSPIN,
+        F_WHEEL,
+        F_PRUP,
+    };
+
     /// <summary>Minimum near-miss collection target for a non-winning filler
     /// symbol. Raised from the original 1-3 range so the near-miss EXPERIENCE
     /// is actually visible to the player, not a token amount that barely

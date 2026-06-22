@@ -30,7 +30,11 @@ internal sealed class Placer
             int req     = _inp.Required.GetValueOrDefault(id, 0);
             int limit   = req > 0 ? req : maxInst;
             double prob = FeatReg.Cfg[id].P;
-            int capSpin = Math.Min(maxS, totalSpinsKnown - 1);
+            // maxS is an exclusive upper bound throughout this class and in
+            // Feat.TryPlace implementations. Token features may fire on the
+            // penultimate spin, so pass totalSpinsKnown (not totalSpinsKnown - 1)
+            // to keep the full legal placement window available.
+            int capSpin = Math.Min(maxS, totalSpinsKnown);
 
             // EXTRA_SPIN has no safe "optional, for variety" mode at all — unlike
             // WHEEL/FLUSH (whose own ResolveFeatures gate adds a "needed OR lucky"
@@ -48,7 +52,7 @@ internal sealed class Placer
             // full 3 awards on a ticket that needed zero. Skip entirely when req==0.
             if (id == "EXTRA_SPIN" && req == 0) continue;
 
-            if ((id == "FLUSH" || id == "EXTRA_SPIN") && req > 0)
+            if ((id == "WHEEL" || id == "FLUSH" || id == "EXTRA_SPIN") && req > 0)
             {
                 int placed = PlaceRequiredFeature(id, req, minS, capSpin, done, used);
                 if (placed < req)
@@ -81,20 +85,16 @@ internal sealed class Placer
                 continue;
             }
 
-            for (int i = 0; i < limit; i++)
+            int optionalCount = Enumerable.Range(0, limit)
+                .Count(_ => _rng.NextDouble() < prob);
+            foreach (int target in EvenlySpreadSpins(minS, capSpin, optionalCount))
             {
-                bool must = i < req;
-                if (!must && _rng.NextDouble() >= prob) continue;
+                var r = PlaceNearSpin(FeatReg.Get(id), target, minS, capSpin, done, used);
+                if (r == null) continue;
 
-                var r = TryPlace(id, minS, capSpin, done, used);
-                if (r != null)
-                {
-                    done.Add(r);
-                    used.Add((r.Spin, r.Col));
-                    _log.Add($"  placed {id}@S{r.Spin}C{r.Col}{(r.WSym != 0 ? $" sym={r.WSym}" : "")}");
-                }
-                else if (must)
-                    _log.Add($"  WARN: could not place required {id}");
+                done.Add(r);
+                used.Add((r.Spin, r.Col));
+                _log.Add($"  placed {id}@S{r.Spin}C{r.Col}{(r.WSym != 0 ? $" sym={r.WSym}" : "")}");
             }
         }
         return done;
@@ -213,10 +213,11 @@ internal sealed class Placer
     private PlacedFeat? TryPlace(string id, int minS, int maxS,
                                   List<PlacedFeat> done, HashSet<(int, int)> used)
     {
+        if (minS >= maxS) return null;
         var feat = FeatReg.Get(id);
         for (int a = 0; a < Tries; a++)
         {
-            int spin = _rng.Next(minS, maxS + 1);
+            int spin = _rng.Next(minS, maxS);
             int col  = _rng.Next(0, K.COLS);
             var r    = feat.TryPlace(new PlaceCtx
             {
