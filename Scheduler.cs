@@ -75,7 +75,7 @@ internal sealed class Scheduler
             if (remaining > 0)
             {
                 remaining = FillAcrossSlots(sym, remaining,
-                    Enumerable.Range(lastFireSpin + 1, Math.Max(0, totalSpins - 1 - (lastFireSpin + 1))),
+                    Enumerable.Range(lastFireSpin + 1, Math.Max(0, totalSpins - (lastFireSpin + 1))),
                     slots, tokenReserve);
             }
 

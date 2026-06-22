@@ -2,16 +2,25 @@ namespace CoinPusherEngine;
 
 internal static class WMath
 {
-    // Smallest n>=1 where Zone(target,2^n)>=1 AND Zone*2^n<=target
+    // Best power-of-two stack that maximizes safe WHEEL contribution without
+    // exceeding the target. Ties prefer more visible zone cells.
     internal static int BestN(int target)
     {
+        int bestN = 1, bestPost = 0, bestZone = 0;
         for (int n = 1; n <= 6; n++)
         {
             int stack = 1 << n;
             int zone  = Zone(target, stack);
-            if (zone >= 1 && zone * stack <= target) return n;
+            int post = zone * stack;
+            if (zone < 1 || post > target) continue;
+            if (post > bestPost || (post == bestPost && zone > bestZone))
+            {
+                bestN = n;
+                bestPost = post;
+                bestZone = zone;
+            }
         }
-        return 3;
+        return bestPost > 0 ? bestN : 3;
     }
 
     // min(target/stack, COLS-1)  — cap leaves 1 slot for the WHEEL token

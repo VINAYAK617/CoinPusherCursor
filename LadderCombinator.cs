@@ -369,7 +369,8 @@ public sealed class LadderCombinator
         var required = new Dictionary<string, int>();
         if (totalUpgradeTokens > 0) required["PRIZE_UPGRADE"] = totalUpgradeTokens;
 
-        int fillSymCount = Math.Max(1, _rows.Count - targets.Count);
+        int maxSym = SymbolPoolSizeFor(targets.Count);
+        int fillSymCount = Math.Max(1, maxSym - targets.Count);
 
         return new MathInput
         {
@@ -378,7 +379,7 @@ public sealed class LadderCombinator
             Required   = required,
             PrizeTiers = prizeTiers.Count > 0 ? prizeTiers : null,
             PrizeValues = BuildPrizeValues(Enumerable.Range(1, _rows.Count)),
-            MaxSym     = _rows.Count,
+            MaxSym     = maxSym,
         };
     }
 
@@ -400,7 +401,7 @@ public sealed class LadderCombinator
             Required   = required,
             PrizeTiers = prizeTiers,
             PrizeValues = BuildPrizeValues(Enumerable.Range(1, _rows.Count)),
-            MaxSym     = _rows.Count,
+            MaxSym     = SymbolPoolSizeFor(1),
         };
     }
 
@@ -427,4 +428,7 @@ public sealed class LadderCombinator
 
     /// <summary>Same fixed baseline for bundled multi-symbol tickets.</summary>
     private static int SpinsForBundle(int physWins, int tier, int fillSymCount) => K.BASE_SPINS;
+
+    private int SymbolPoolSizeFor(int targetCount) =>
+        Math.Max(_rows.Count, targetCount + 2);
 }
