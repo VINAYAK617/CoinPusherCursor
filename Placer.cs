@@ -2,10 +2,10 @@ namespace CoinPusherEngine;
 
 internal sealed class Placer
 {
-    private readonly MathInput _inp;
-    private readonly Random _rng;
+    private readonly MathInput    _inp;
+    private readonly Random       _rng;
     private readonly List<string> _log;
-    private const int Tries = 400;
+    private const    int          Tries = 400;
 
     internal Placer(MathInput inp, Random rng, List<string> log)
     { _inp = inp; _rng = rng; _log = log; }
@@ -27,16 +27,48 @@ internal sealed class Placer
         foreach (var id in FeatReg.Ordered)
         {
             var (_, maxInst, minS, maxS, _) = FeatReg.Cfg[id];
-            int req = _inp.Required.GetValueOrDefault(id, 0);
-            int limit = req > 0 ? req : maxInst;
+            int req     = _inp.Required.GetValueOrDefault(id, 0);
+            int limit   = req > 0 ? req : maxInst;
             double prob = FeatReg.Cfg[id].P;
             int capSpin = Math.Min(maxS, totalSpinsKnown - 1);
+
+            // EXTRA_SPIN has no safe "optional, for variety" mode at all — unlike
+            // WHEEL/FLUSH (whose own ResolveFeatures gate adds a "needed OR lucky"
+            // branch before ever setting Required), every additional spin makes the
+            // filler budget WORSE, never better (see CapacityModel's doc comment:
+            // "more spins WORSENS feasibility"). ResolveFeatures already encodes
+            // that — it sets Required["EXTRA_SPIN"] to EXACTLY the count
+            // MinExtraSpins decided is needed, and never adds an optional extra on
+            // top. But when extras==0, Required simply has no entry for
+            // "EXTRA_SPIN" at all, and without this guard the generic optional-roll
+            // loop below would still independently roll up to maxInst (3) more
+            // instances at 20% each, completely bypassing that decision. This was a
+            // real, confirmed bug: ~23% of tickets received EXTRA_SPIN awards
+            // ResolveFeatures never decided were needed, occasionally stacking the
+            // full 3 awards on a ticket that needed zero. Skip entirely when req==0.
+            if (id == "EXTRA_SPIN" && req == 0) continue;
 
             if ((id == "FLUSH" || id == "EXTRA_SPIN") && req > 0)
             {
                 int placed = PlaceRequiredFeature(id, req, minS, capSpin, done, used);
                 if (placed < req)
-                    _log.Add($"  WARN: could only place {placed}/{req} required {id}");
+                {
+                    // A genuine placement failure, not a volume/feasibility one: the
+                    // (spin,col) grid this feature's window offers — after whatever
+                    // higher-priority features (WHEEL, FLUSH; see FeatReg.Cfg's Ord)
+                    // already claimed — has fewer free cells than this REQUIRED count
+                    // needs. CapacityModel's feasibility math only ever reasons about
+                    // collected-cell VOLUME, not this placement GEOMETRY, so it can't
+                    // see this coming — the only trustworthy signal is Placer actually
+                    // trying and coming up short. Throwing here (instead of silently
+                    // returning a ticket missing required tokens) lets Plan()'s
+                    // existing retry loop pick a fresh seed, which assigns different
+                    // WHEEL/FLUSH/EXTRA_SPIN spin/column choices and may free up
+                    // enough room. This mirrors every other kind of infeasibility in
+                    // this pipeline: detected by trying, not predicted in advance.
+                    throw new InvalidOperationException(
+                        $"Could only place {placed}/{req} required {id} — placement window too small");
+                }
                 continue;
             }
 
@@ -44,7 +76,8 @@ internal sealed class Placer
             {
                 int placed = PlaceRequiredPrizeUpgrades(req, minS, capSpin, done, used);
                 if (placed < req)
-                    _log.Add($"  WARN: could only place {placed}/{req} required PRIZE_UPGRADE");
+                    throw new InvalidOperationException(
+                        $"Could only place {placed}/{req} required PRIZE_UPGRADE — placement window too small");
                 continue;
             }
 
@@ -167,14 +200,8 @@ internal sealed class Placer
 
                     var r = feat.TryPlace(new PlaceCtx
                     {
-                        Spin = spin,
-                        Col = col,
-                        Done = done,
-                        Rng = _rng,
-                        Input = _inp,
-                        MaxSpin = maxS,
-                        MinSpin = minS,
-                        Used = used,
+                        Spin=spin, Col=col, Done=done, Rng=_rng,
+                        Input=_inp, MaxSpin=maxS, MinSpin=minS, Used=used,
                     });
                     if (r != null) return r;
                 }
@@ -190,17 +217,11 @@ internal sealed class Placer
         for (int a = 0; a < Tries; a++)
         {
             int spin = _rng.Next(minS, maxS + 1);
-            int col = _rng.Next(0, K.COLS);
-            var r = feat.TryPlace(new PlaceCtx
+            int col  = _rng.Next(0, K.COLS);
+            var r    = feat.TryPlace(new PlaceCtx
             {
-                Spin = spin,
-                Col = col,
-                Done = done,
-                Rng = _rng,
-                Input = _inp,
-                MaxSpin = maxS,
-                MinSpin = minS,
-                Used = used,
+                Spin=spin, Col=col, Done=done, Rng=_rng,
+                Input=_inp, MaxSpin=maxS, MinSpin=minS, Used=used,
             });
             if (r != null) return r;
         }

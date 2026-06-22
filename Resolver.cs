@@ -19,14 +19,17 @@ internal sealed class Resolver
 {
     private readonly int[]        _fills;
     private readonly HashSet<int> _winSyms;
+    private readonly HashSet<int> _nonWinSyms;
     private readonly int[]        _endBoardSyms;
     private readonly List<string> _log;
     private readonly Random       _rng;
     private readonly FillTracker  _fillTracker;
 
-    internal Resolver(int[] fills, HashSet<int> winSyms, List<string> log, Random rng, FillTracker fillTracker)
+    internal Resolver(int[] fills, HashSet<int> winSyms, List<string> log, Random rng,
+                       FillTracker fillTracker, IEnumerable<int>? nonWinSyms = null)
     {
         _fills=fills; _winSyms=winSyms; _log=log; _rng=rng; _fillTracker=fillTracker;
+        _nonWinSyms = nonWinSyms != null ? new HashSet<int>(nonWinSyms) : new HashSet<int>();
         _endBoardSyms = _fills.Concat(_winSyms).Distinct().OrderBy(sym => sym).ToArray();
     }
 
@@ -70,7 +73,7 @@ internal sealed class Resolver
                 cur.Spawns[(r, c)] = plan.Clone();
         }
 
-        PlaceTokens(cur);
+        PlaceTokens(cur, next);
     }
 
     private void DoLast(SpinPlan last)
@@ -109,7 +112,7 @@ internal sealed class Resolver
         return Grid.RotCW(b);
     }
 
-    private void PlaceTokens(SpinPlan sp)
+    private void PlaceTokens(SpinPlan sp, SpinPlan next)
     {
         foreach (var (featId, origCol, fp) in sp.Tokens)
         {
@@ -117,38 +120,128 @@ internal sealed class Resolver
             var feat = FeatReg.Get(featId);
 
             var slot = FindFillerSlot(sp.Spawns, origCol);
+
+            // FindFillerSlot only searches EXISTING spawn entries — but a spawn entry
+            // only exists where the natural forward simulation disagreed with the plan
+            // (see Resolver's class doc). If every position the plan reserved for this
+            // token's filler happens to match what the natural simulation already
+            // delivers there, NO spawn entry exists at all, even though the PLANNED
+            // board genuinely has an ordinary filler symbol sitting exactly where
+            // Builder's TokenReservedPositions/FillZone meant for this token to land.
+            // This was a real, confirmed bug: tokens (mostly EXTRA_SPIN and
+            // PRIZE_UPGRADE) were silently dropped from the ticket entirely whenever
+            // this coincidence occurred — Verifier never caught it because it only
+            // checks COLLECTED TOTALS, not whether every planned feature token
+            // actually reached the board.
+            //
+            // IMPORTANT: sp.Spawns keys are POST-ROTATION coordinates — ApplySpawns
+            // writes them onto the board AFTER RotCW, which means they describe
+            // positions on `next`'s board, not `sp`'s own pre-rotation board. So the
+            // fallback must scan `next.Board`, restricted to `next`'s OWN collection
+            // zone (its Push/Flush) — that is the same plan TokenReservedPositions
+            // used when it originally reserved room for this exact token.
+            if (slot == default)
+                slot = FindBoardFallbackSlot(sp.Spawns, next, origCol);
+
             if (slot == default)
             {
                 _log.Add($"  WARN: no filler slot for {featId}@S{sp.Spin}");
                 continue;
             }
 
-            int cvt = sp.Spawns[slot].Sym;
+            int cvt = sp.Spawns.TryGetValue(slot, out var existing)
+                ? existing.Sym
+                : next.Board[slot.Item1, slot.Item2]!.Sym;
             sp.Spawns[slot] = Grid.Feat(feat.FeatSym, cvt, fp);
         }
     }
 
+    /// <summary>
+    /// Scans `next`'s planned board directly, restricted to positions inside next's
+    /// own collection zone (so the token is guaranteed to fire when that spin's
+    /// FireAll processes it — anything outside the zone wouldn't fire until some
+    /// later spin, breaking the "this token fires at spin S" contract), for an
+    /// ordinary filler cell (not a win symbol, not already a feature) that doesn't
+    /// already have a Spawns entry in `spawns`. Mirrors FindFillerSlot's preference
+    /// order: the token's own reserved column first, then other rows in that column,
+    /// then anywhere else in the zone.
+    /// </summary>
+    private (int r, int c) FindBoardFallbackSlot(Dictionary<(int, int), Cell> spawns,
+                                                  SpinPlan next, int origCol)
+    {
+        var zoneSet = Grid.ZoneSet(next.Push, next.Flush);
+
+        // Same two-tier preference as FindFillerSlot (see its comment): win symbols
+        // are never eligible; near-miss symbols are tried last, only if no ordinary
+        // filler slot exists anywhere in the zone.
+        bool Eligible((int, int) pos, bool allowNearMiss)
+        {
+            if (!zoneSet.Contains(pos)) return false;
+            if (spawns.ContainsKey(pos)) return false;   // already handled by FindFillerSlot
+            var cell = next.Board[pos.Item1, pos.Item2];
+            if (cell == null || cell.IsFeat || _winSyms.Contains(cell.Sym)) return false;
+            return allowNearMiss || !_nonWinSyms.Contains(cell.Sym);
+        }
+
+        foreach (bool allowNearMiss in new[] { false, true })
+        {
+            var primary = (origCol, K.COLS - 1);
+            if (Eligible(primary, allowNearMiss)) return primary;
+
+            for (int r = K.ROWS - 1; r >= 0; r--)
+                if (Eligible((r, origCol), allowNearMiss)) return (r, origCol);
+
+            foreach (var pos in zoneSet.OrderByDescending(p => p.Item2).ThenBy(p => p.Item1))
+                if (Eligible(pos, allowNearMiss)) return pos;
+        }
+
+        return default;
+    }
+
     private (int r, int c) FindFillerSlot(Dictionary<(int, int), Cell> spawns, int origCol)
     {
-        bool Eligible((int, int) key) =>
+        // Win symbols are NEVER eligible — their exact count is load-bearing.
+        // Near-miss symbols (declared minimum, see NonWinTargets/FillZone) are
+        // ALSO protected, but only as a PREFERENCE, not an absolute ban: try every
+        // search tier using ordinary filler ONLY first (allowNearMiss=false); only
+        // if that whole search comes up empty, retry the exact same search tiers
+        // allowing near-miss symbols too (allowNearMiss=true). This keeps near-miss
+        // minimums safe in the common case (plenty of true ordinary filler
+        // available) without reintroducing the silent-token-drop failure in the
+        // rare case where near-miss symbols dominate the filler pool and excluding
+        // them entirely would leave no eligible slot anywhere. Before this two-tier
+        // approach existed, a near-miss symbol's cell could be hijacked freely —
+        // never actually wrong in practice only because Verifier.Check would catch
+        // a genuine violation and force a retry, which is a safety net catching a
+        // mistake, not the mistake being prevented by construction. Confirmed via
+        // real-ticket review: a PRIZE_UPGRADE token legitimately converted a
+        // near-miss symbol's cell this exact way.
+        bool Eligible((int, int) key, bool allowNearMiss) =>
             spawns.TryGetValue(key, out var cell)
             && !_winSyms.Contains(cell.Sym)
+            && (allowNearMiss || !_nonWinSyms.Contains(cell.Sym))
             && !cell.IsFeat;
 
-        var primary = (origCol, K.COLS - 1);
-        if (Eligible(primary)) return primary;
+        foreach (bool allowNearMiss in new[] { false, true })
+        {
+            var primary = (origCol, K.COLS - 1);
+            if (Eligible(primary, allowNearMiss)) return primary;
 
-        var byRow = spawns.Keys
-            .Where(k => k.Item1 == origCol && Eligible(k))
-            .OrderByDescending(k => k.Item2)
-            .FirstOrDefault();
-        if (byRow != default) return byRow;
+            var byRow = spawns.Keys
+                .Where(k => k.Item1 == origCol && Eligible(k, allowNearMiss))
+                .OrderByDescending(k => k.Item2)
+                .FirstOrDefault();
+            if (byRow != default) return byRow;
 
-        return spawns.Keys
-            .Where(Eligible)
-            .OrderByDescending(k => k.Item2)
-            .ThenBy(k => k.Item1)
-            .FirstOrDefault();
+            var anywhere = spawns.Keys
+                .Where(k => Eligible(k, allowNearMiss))
+                .OrderByDescending(k => k.Item2)
+                .ThenBy(k => k.Item1)
+                .FirstOrDefault();
+            if (anywhere != default) return anywhere;
+        }
+
+        return default;
     }
 
     private static void FlattenFeats(Cell?[,] b)
