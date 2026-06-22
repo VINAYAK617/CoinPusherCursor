@@ -11,7 +11,7 @@ namespace CoinPusherEngine;
 /// THE BINDING CONSTRAINT — filler capacity:
 ///   total_collected = S×FloorVol + dense_spins×(denseVol − FloorVol)
 ///   filler_collected = total_collected − physWins
-///   filler_collected ≤ fillSymCount × FILL_CAP   (filler budget)
+///   filler_collected < fillSymCount × FILL_CAP   (filler budget)
 ///
 ///   Solving for max allowable dense spins given S total spins:
 ///     denseAllowed = floor((physWins + fillerBudget − S×FloorVol) / (denseVol − FloorVol))

@@ -30,19 +30,12 @@ using static TicketSerializer;
 ///    checker was wrong, not the engine. ResolveConvert below now walks the
 ///    ReTrigger chain to its end to find the real eventual symbol.
 ///
-/// 2. Silent PRIZE_UPGRADE token drop (a REAL engine-side gap, not a checker
-///    bug — left as a detectable condition here, see check #11 below):
-///    Resolver.PlaceTokens silently skips a feature token entirely
-///    (`continue`, logging only "WARN: no filler slot for ...") whenever
-///    FindFillerSlot can't find an eligible board position for it. Verifier
-///    never catches this because it only checks COLLECTED TOTALS, not whether
-///    every planned feature token actually made it onto the board — so a
-///    ticket can pass Verifier.Check while a declared PrizeTiers entry has
-///    fewer actual PRIZE_UPGRADE tokens in the ticket than its tier implies.
-///    This checker's tier-consistency check (#11) is intentionally NOT relaxed
-///    to tolerate this — a mismatch here means the player-facing ticket is
-///    genuinely missing an upgrade step the math declared, and that should
-///    fail loudly, not be silently accepted.
+/// 2. PRIZE_UPGRADE token presence:
+///    Verifier checks collected totals, but the serialized ticket also needs
+///    every declared upgrade step to appear as a visible token. Resolver now
+///    fails planning when it cannot place a required feature token; check #11
+///    independently verifies the public ticket still matches the declared
+///    tier data.
 ///
 /// 3. WHEEL/PostWheelIso reconciliation (a genuine LIMITATION of auditing from
 ///    the public schema alone, not a bug in either the engine or this checker):
@@ -274,12 +267,9 @@ public static class TicketChecker
         // ── 11. PRIZE_UPGRADE TIER CONSISTENCY ──────────────────────────────
         // Declared tiers can come from EITHER WinInfo.PrizeTiers (winning
         // symbols) OR a near-miss symbol's own NonWinSymbolDto.PrizeTier field.
-        // A mismatch here is NOT assumed to be a checker bug — it is a real,
-        // confirmed possibility: Resolver.PlaceTokens can silently drop a
-        // PRIZE_UPGRADE token when no filler slot is available (logged only as
-        // "WARN: no filler slot for ..." internally, never surfaced to the
-        // ticket or caught by Verifier, which only checks collected totals).
-        // This check exists specifically to catch that gap from the outside.
+        // This cross-check catches any mismatch between declared tiers and the
+        // public token sequence, independent of the internal collected-total
+        // verifier.
         var declaredTiers = (t.WinInfo.PrizeTiers ?? Array.Empty<PrizeTierDto>())
             .ToDictionary(p => p.SymId, p => p.Tier);
         foreach (var nw in t.WinInfo.NonWinSymbols ?? Array.Empty<NonWinSymbolDto>())
@@ -298,9 +288,7 @@ public static class TicketChecker
             if (finalTier != declared)
                 Add("Feature", $"PRIZE_UPGRADE sym {sym} final tier matches declared", Status.Fail,
                     $"declared tier={declared} but last token in replay reaches tier={finalTier} " +
-                    "(possible silently-dropped token — Resolver can skip a PRIZE_UPGRADE token entirely " +
-                    "when no filler slot is available; this never fails Verifier, since Verifier only " +
-                    "checks collected totals, not whether every planned token reached the board)");
+                    "(serialized token sequence does not match WinInfo tier declaration)");
             else
                 Add("Feature", $"PRIZE_UPGRADE sym {sym} final tier matches declared", Status.Pass,
                     $"tier {finalTier}");
@@ -310,8 +298,7 @@ public static class TicketChecker
             if (!replay.PrupFinalTierPerSymbol.ContainsKey(sym))
                 Add("Feature", $"PRIZE_UPGRADE sym {sym} has matching tokens", Status.Fail,
                     $"WinInfo declares tier {declared} for sym {sym}, but NO PRIZE_UPGRADE tokens for " +
-                    "that symbol were found anywhere in the replay — likely a silently-dropped token " +
-                    "(see Resolver.PlaceTokens' \"no filler slot\" path)");
+                    "that symbol were found anywhere in the replay");
         }
 
         return report;

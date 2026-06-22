@@ -145,8 +145,9 @@ internal sealed class Resolver
 
             if (slot == default)
             {
-                _log.Add($"  WARN: no filler slot for {featId}@S{sp.Spin}");
-                continue;
+                throw new InvalidOperationException(
+                    $"No filler slot available for required {featId} token at spin {sp.Spin}. " +
+                    "Retry with a different seed or adjust feature load.");
             }
 
             int cvt = sp.Spawns.TryGetValue(slot, out var existing)

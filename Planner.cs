@@ -198,7 +198,7 @@ public sealed class Planner
         int wheels   = 0, nonWinWheels = 0, flushes = 0, extras = 0;
         bool allowOptionalFeatures = !IsHighPressureTicket();
 
-        if (_inp.Required.ContainsKey("WHEEL") || _inp.Required.ContainsKey("EXTRA_SPIN"))
+        if (_inp.Required.ContainsKey("WHEEL") || _inp.Required.ContainsKey("FLUSH") || _inp.Required.ContainsKey("EXTRA_SPIN"))
             return AddNonWinFeaturesIfPossible(_inp, winSyms, nonWinTargets, nonWinPrizeTiers, log);
 
         // ── 1. WHEEL ──────────────────────────────────────────────────────
@@ -338,7 +338,9 @@ public sealed class Planner
                                                   List<string> log)
     {
         int existingWheels = source.Required.GetValueOrDefault("WHEEL");
+        int existingExtras = source.Required.GetValueOrDefault("EXTRA_SPIN");
         int nonWinPrupTokens = nonWinPrizeTiers.Values.Sum();
+        int plannedFillerLoad = nonWinTargets.Values.Sum();
 
         // Same per-symbol, cumulative-cap gating as ResolveFeatures' main path
         // (see its comment) — every eligible near-miss symbol independently rolls
@@ -354,10 +356,26 @@ public sealed class Planner
             addedWheels++;
         }
 
-        if (addedWheels == 0 && nonWinPrupTokens == 0) return source;
-
         var required = AddRequired(source.Required, "PRIZE_UPGRADE", nonWinPrupTokens);
         if (addedWheels > 0) required["WHEEL"] = existingWheels + addedWheels;
+
+        int totalWheels = required.GetValueOrDefault("WHEEL");
+        int physWins = CapacityModel.PhysicalWins(source.Targets, totalWheels);
+        int tokenLoadExcludingExtraSpins =
+            RequiredTokenLoad(required) - existingExtras + plannedFillerLoad;
+        int minExtras = CapacityModel.MinExtraSpins(
+            physWins,
+            Math.Max(1, source.MaxSym - source.Targets.Count),
+            source.BaseSpins,
+            tokenLoadExcludingExtraSpins);
+        if (minExtras > existingExtras)
+        {
+            required["EXTRA_SPIN"] = minExtras;
+            log.Add($"features: raised EXTRA_SPIN from {existingExtras} to {minExtras} for required-feature capacity");
+        }
+
+        if (addedWheels == 0 && nonWinPrupTokens == 0 && required.Count == source.Required.Count && required.All(kv => source.Required.TryGetValue(kv.Key, out var count) && count == kv.Value))
+            return source;
 
         var wheelOrder = BuildWheelOrder(winSyms, nonWinTargets, existingWheels + addedWheels, addedWheels);
         var prizeTiers = MergeTiers(source.PrizeTiers, nonWinPrizeTiers);
@@ -406,8 +424,8 @@ public sealed class Planner
         // Near-miss targets are intentionally substantial — at least
         // K.NONWIN_MIN_TARGET (15) — so the near-miss EXPERIENCE is actually
         // visible to the player (a target of 1-3, as earlier versions used,
-        // barely registers). Capped at K.FILL_CAP-1 to leave the same one-cell
-        // safety margin Verifier's strict "< FILL_CAP" check already requires
+        // barely registers). Capped at K.FILL_CAP-1 because K.FILL_CAP itself
+        // is the first invalid count; Verifier's strict "< FILL_CAP" check
         // everywhere else. This consumes more of the same filler/tokenLoad
         // budget that ResolveFeatures' capacity math (MinExtraSpins, IsFeasible)
         // already accounts for — nothing here bypasses that; if a larger

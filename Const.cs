@@ -10,7 +10,7 @@ internal static class K
     internal const int COLS       = 5;
     internal const int MIN_PUSH   = 1;    // minimum rows collected per column per spin
     internal const int MAX_PUSH   = 3;    // maximum rows collected per column per spin
-    internal const int FILL_CAP   = 19;   // filler over-collection guard
+    internal const int FILL_CAP   = 20;   // filler over-collection guard: 20+ is invalid
 
     // Every ticket's baseline spin count is fixed at 5 — this is never computed or
     // clamped by capacity math. The only way to exceed it is to plan for and award
@@ -63,7 +63,7 @@ internal static class K
     /// <summary>Minimum near-miss collection target for a non-winning filler
     /// symbol. Raised from the original 1-3 range so the near-miss EXPERIENCE
     /// is actually visible to the player, not a token amount that barely
-    /// registers. Capped well under FILL_CAP (19) by the call sites that use
+    /// registers. Capped well under FILL_CAP (20) by the call sites that use
     /// this, leaving the same one-cell safety margin used everywhere else.</summary>
     internal const int NONWIN_MIN_TARGET = 15;
 
