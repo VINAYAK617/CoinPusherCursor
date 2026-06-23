@@ -80,12 +80,6 @@ internal static class K
         (0.20, 18, 19, 3),
     };
 
-    /// <summary>High-pressure tickets may still show a near-miss, but less often
-    /// and with a smaller footprint so it does not steal guaranteed-win capacity.</summary>
-    internal const double P_HIGH_PRESSURE_NONWIN_TARGET = 0.85;
-    internal const int HIGH_PRESSURE_NONWIN_MIN_TARGET = 7;
-    internal const int HIGH_PRESSURE_NONWIN_MAX_TARGET = 9;
-
     /// <summary>
     /// Presentation-only chance that no-board-effect feature tokens are folded into
     /// a nested ReTrigger chain under any board feature. When the roll misses, every

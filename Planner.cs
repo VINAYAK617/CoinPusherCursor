@@ -19,7 +19,7 @@ public sealed class Planner
     // K.P_NONWIN_PRIZE_UPGRADE — see the comment there for what they do and do
     // not control. WHEEL and FLUSH are desirable for game variety, but are never
     // forced unless the ticket is structurally infeasible without them.
-    private const int    MaxPlanAttempts = 512;
+    private const int    MaxPlanAttempts = 4096;
 
     public Planner(MathInput inp, int? seed = null)
     {
@@ -433,30 +433,14 @@ public sealed class Planner
         // infeasible and the normal retry loop handles it, exactly as it
         // already does for any other infeasible combination.
         //
-        // High-pressure tickets already need most of the board budget for
-        // guaranteed win delivery. A small near-miss may still appear, but only by
-        // probability and at a lower target band.
-        if (IsHighPressureTicket())
-        {
-            if (_rng.NextDouble() >= K.P_HIGH_PRESSURE_NONWIN_TARGET)
-            {
-                return new Dictionary<int, int>();
-            }
-
-            int sym = fillSyms[_rng.Next(fillSyms.Count)];
-            int target = _rng.Next(
-                K.HIGH_PRESSURE_NONWIN_MIN_TARGET,
-                Math.Min(K.HIGH_PRESSURE_NONWIN_MAX_TARGET, K.FILL_CAP - 1) + 1);
-            return new Dictionary<int, int> { { sym, target } };
-        }
-
         var profile = PickNonWinProfile();
         if (profile.MaxSymbols <= 0 || profile.Max <= 0)
         {
             return new Dictionary<int, int>();
         }
 
-        int count = _rng.Next(1, Math.Min(profile.MaxSymbols, fillSyms.Count) + 1);
+        int maxSymbols = IsHighPressureTicket() ? 1 : profile.MaxSymbols;
+        int count = _rng.Next(1, Math.Min(maxSymbols, fillSyms.Count) + 1);
         int minTarget = Math.Min(profile.Min, K.FILL_CAP - 1);
         int maxTarget = Math.Min(profile.Max, K.FILL_CAP - 1);
 
