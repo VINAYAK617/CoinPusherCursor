@@ -15,10 +15,9 @@ namespace CoinPusherEngine;
 ///   EXTRA_SPIN    -> { FeatureId, ConvertToId, ReTrigger: [...] }
 ///   PRIZE_UPGRADE -> { FeatureId, ConvertToId, UpgradeSymbolId, UpgradePrizeValue }
 ///
-/// ReTrigger chaining: when MULTIPLE EXTRA_SPIN tokens exist across a ticket, only the
-/// FIRST is kept as a real feature spawn — every subsequent feature is folded into a
-/// nested ReTrigger array inside it. The later physical board slots are still emitted as
-/// ordinary converted cells so the serialized board replay stays fully populated.
+/// ReTrigger chaining: with configurable probability, no-board-effect feature tokens
+/// (EXTRA_SPIN / PRIZE_UPGRADE) may be folded into a nested ReTrigger array under any
+/// board feature. WHEEL stays physical because its fire timing affects stacks.
 ///
 /// Pos field: every spawn carries "Pos": row*5+col (flat index), per the established schema.
 /// </summary>
@@ -133,41 +132,21 @@ public static class TicketSerializer
 
     private static TurnDto[] BuildTurns(GamePlan plan)
     {
-        var allXSpinTokens = plan.Spins
+        var allFeatureTokens = plan.Spins
             .SelectMany(sp => sp.Spawns
-                .Where(kv => kv.Value.IsFeat && kv.Value.Sym == K.F_XSPIN)
+                .Where(kv => kv.Value.IsFeat)
                 .Select(kv => (Spin: sp.Spin, Pos: kv.Key, Cell: kv.Value)))
             .OrderBy(t => t.Spin)
             .ThenBy(t => t.Pos.Item1 * K.COLS + t.Pos.Item2)
             .ToList();
-        bool chainExtraSpins = ShouldChainExtraSpins(plan, allXSpinTokens);
+        var chainPlan = BuildFeatureChainPlan(plan, allFeatureTokens);
 
-        var chainStart = new HashSet<(int Spin, (int, int) Pos)>();
-        var suppressed = new HashSet<(int Spin, (int, int) Pos)>();
-
-        for (int i = 0; chainExtraSpins && i < allXSpinTokens.Count; i++)
-        {
-            var key = (allXSpinTokens[i].Spin, allXSpinTokens[i].Pos);
-            if (i == 0) { chainStart.Add(key); continue; }
-            suppressed.Add(key);
-        }
-
-        FeatureDto? nested = null;
-        for (int i = allXSpinTokens.Count - 1; i >= 1; i--)
-        {
-            var cell = allXSpinTokens[i].Cell;
-            int cvt  = cell.CvtSym > 0 ? cell.CvtSym : K.F_COIN;
-            bool hasRetrigger = nested is not null;
-            var f = new FeatureDto
-            {
-                FeatureId = K.F_XSPIN,
-                ConvertToId = hasRetrigger
-                    ? ExtraSpinChainConvertId(cell, i)
-                    : cvt,
-                ReTrigger = hasRetrigger ? new[] { nested! } : System.Array.Empty<FeatureDto>()
-            };
-            nested = f;
-        }
+        var chainStart = chainPlan.Start is null
+            ? new HashSet<(int Spin, (int, int) Pos)>()
+            : new HashSet<(int Spin, (int, int) Pos)> { (chainPlan.Start.Value.Spin, chainPlan.Start.Value.Pos) };
+        var suppressed = chainPlan.Suppressed
+            .Select(token => (token.Spin, token.Pos))
+            .ToHashSet();
 
         var turns = new List<TurnDto>();
         foreach (var sp in plan.Spins)
@@ -191,20 +170,14 @@ public static class TicketSerializer
                     continue;
                 }
 
-                if (chainStart.Contains(posKey) && nested != null)
+                if (chainStart.Contains(posKey) && chainPlan.Nested != null)
                 {
                     var c   = kv.Value;
-                    int cvt = c.CvtSym > 0 ? c.CvtSym : K.F_COIN;
                     spawns.Add(new SpawnDto
                     {
                         Pos = pos,
                         Id = c.Sym,
-                        Feature = new FeatureDto
-                        {
-                            FeatureId = K.F_XSPIN,
-                            ConvertToId = ExtraSpinChainConvertId(c, 0),
-                            ReTrigger = new[] { nested }
-                        }
+                        Feature = FeatureObj(c, plan, new[] { chainPlan.Nested }, depth: 0)
                     });
                     continue;
                 }
@@ -218,25 +191,66 @@ public static class TicketSerializer
         return turns.ToArray();
     }
 
-    private static bool ShouldChainExtraSpins(
+    private static FeatureChainPlan BuildFeatureChainPlan(
         GamePlan plan,
-        IReadOnlyList<(int Spin, (int, int) Pos, Cell Cell)> extraSpinTokens)
+        IReadOnlyList<(int Spin, (int, int) Pos, Cell Cell)> featureTokens)
     {
-        if (extraSpinTokens.Count <= 1) return false;
-        var roll = DeterministicUnitInterval(plan.TotalSpins, extraSpinTokens[0].Spin, extraSpinTokens[0].Pos);
-        return roll < K.P_EXTRA_SPIN_RETRIGGER_CHAIN;
+        if (featureTokens.Count == 0) return FeatureChainPlan.Empty;
+
+        var chainable = featureTokens
+            .Where(token => IsNoBoardEffectFeature(token.Cell))
+            .ToList();
+        if (chainable.Count == 0) return FeatureChainPlan.Empty;
+
+        var start = featureTokens[DeterministicIndex(plan.TotalSpins, featureTokens[0].Spin, featureTokens[0].Pos, featureTokens.Count)];
+        var payload = chainable
+            .Where(token => token.Spin != start.Spin || token.Pos != start.Pos)
+            .ToList();
+        if (payload.Count == 0) return FeatureChainPlan.Empty;
+
+        var roll = DeterministicUnitInterval(plan.TotalSpins, start.Spin, start.Pos);
+        if (roll >= K.P_FEATURE_RETRIGGER_CHAIN) return FeatureChainPlan.Empty;
+
+        FeatureDto? nested = null;
+        for (int i = payload.Count - 1; i >= 0; i--)
+        {
+            nested = FeatureObj(
+                payload[i].Cell,
+                plan,
+                nested is null ? System.Array.Empty<FeatureDto>() : new[] { nested },
+                depth: i + 1);
+        }
+
+        return new FeatureChainPlan(start, payload, nested);
     }
 
-    private static int ExtraSpinChainConvertId(Cell cell, int depth)
+    private static bool IsNoBoardEffectFeature(Cell cell) =>
+        cell.Sym is K.F_XSPIN or K.F_PRUP;
+
+    private static int FeatureChainConvertId(Cell cell, int depth, GamePlan plan)
     {
-        var ids = K.EXTRA_SPIN_RETRIGGER_CONVERT_IDS;
-        if (ids.Length == 0) return K.F_XSPIN;
+        var ids = plan.WinSyms
+            .Concat(plan.NonWinTargets.Keys)
+            .Concat(plan.FillSyms)
+            .Concat(K.FEATURE_RETRIGGER_BRIDGE_IDS)
+            .Distinct()
+            .ToArray();
+        if (ids.Length == 0) return K.F_COIN;
 
         var hash = cell.Sym;
         hash = unchecked(hash * 397) ^ cell.CvtSym;
         hash = unchecked(hash * 397) ^ depth;
         hash = unchecked(hash * 397) ^ (cell.Fp?.PrupSym ?? 0);
         return ids[(hash & 0x7fffffff) % ids.Length];
+    }
+
+    private sealed record FeatureChainPlan(
+        (int Spin, (int, int) Pos, Cell Cell)? Start,
+        IReadOnlyList<(int Spin, (int, int) Pos, Cell Cell)> Suppressed,
+        FeatureDto? Nested)
+    {
+        public static FeatureChainPlan Empty { get; } =
+            new(null, System.Array.Empty<(int, (int, int), Cell)>(), null);
     }
 
     private static double DeterministicUnitInterval(int totalSpins, int spin, (int r, int c) pos)
@@ -250,6 +264,20 @@ public static class TicketSerializer
             hash = hash * 31 + pos.c;
             var positive = hash & 0x7fffffff;
             return positive / (double)int.MaxValue;
+        }
+    }
+
+    private static int DeterministicIndex(int totalSpins, int spin, (int r, int c) pos, int count)
+    {
+        if (count <= 1) return 0;
+        unchecked
+        {
+            var hash = 23;
+            hash = hash * 31 + totalSpins;
+            hash = hash * 31 + spin;
+            hash = hash * 31 + pos.r;
+            hash = hash * 31 + pos.c;
+            return (hash & 0x7fffffff) % count;
         }
     }
 
@@ -267,41 +295,19 @@ public static class TicketSerializer
             {
                 Pos = pos,
                 Id = c.Sym,
-                Feature = new FeatureDto
-                {
-                    FeatureId = c.Sym,
-                    ConvertToId = cvt,
-                    WheelSymbolId = c.Fp?.WheelSym ?? 0,
-                    // Public JSON uses bonus semantics: N means a collected cell counts
-                    // as 1 + N. Internally Fp.WheelStack stores the total stack value.
-                    WheelStackValue = Math.Clamp(
-                        Math.Max(0, (c.Fp?.WheelStack ?? 1) - 1),
-                        K.MIN_WHEEL_STACK_VALUE,
-                        K.MAX_WHEEL_STACK_VALUE)
-                }
+                Feature = FeatureObj(c, plan)
             },
             K.F_XSPIN => new SpawnDto
             {
                 Pos = pos,
                 Id = c.Sym,
-                Feature = new FeatureDto
-                {
-                    FeatureId = c.Sym,
-                    ConvertToId = cvt,
-                    ReTrigger = System.Array.Empty<FeatureDto>()
-                }
+                Feature = FeatureObj(c, plan)
             },
             K.F_PRUP => new SpawnDto
             {
                 Pos = pos,
                 Id = c.Sym,
-                Feature = new FeatureDto
-                {
-                    FeatureId = c.Sym,
-                    ConvertToId = cvt,
-                    UpgradeSymbolId = c.Fp?.PrupSym ?? 0,
-                    UpgradePrizeValue = PrizeValueFor(plan, c.Fp?.PrupSym ?? 0, c.Fp?.PrupTier ?? 0)
-                }
+                Feature = FeatureObj(c, plan)
             },
             _ => new SpawnDto
             {
@@ -310,6 +316,43 @@ public static class TicketSerializer
                 Feature = new FeatureDto { FeatureId = c.Sym, ConvertToId = cvt }
             }
         };
+    }
+
+    private static FeatureDto FeatureObj(
+        Cell c,
+        GamePlan plan,
+        FeatureDto[]? reTrigger = null,
+        int depth = 0)
+    {
+        var chain = reTrigger ?? System.Array.Empty<FeatureDto>();
+        var convertToId = chain.Length > 0
+            ? FeatureChainConvertId(c, depth, plan)
+            : c.CvtSym > 0 ? c.CvtSym : K.F_COIN;
+
+        var dto = new FeatureDto
+        {
+            FeatureId = c.Sym,
+            ConvertToId = convertToId,
+            ReTrigger = chain,
+        };
+
+        if (c.Sym == K.F_WHEEL)
+        {
+            dto.WheelSymbolId = c.Fp?.WheelSym ?? 0;
+            // Public JSON uses bonus semantics: N means a collected cell counts
+            // as 1 + N. Internally Fp.WheelStack stores the total stack value.
+            dto.WheelStackValue = Math.Clamp(
+                Math.Max(0, (c.Fp?.WheelStack ?? 1) - 1),
+                K.MIN_WHEEL_STACK_VALUE,
+                K.MAX_WHEEL_STACK_VALUE);
+        }
+        else if (c.Sym == K.F_PRUP)
+        {
+            dto.UpgradeSymbolId = c.Fp?.PrupSym ?? 0;
+            dto.UpgradePrizeValue = PrizeValueFor(plan, c.Fp?.PrupSym ?? 0, c.Fp?.PrupTier ?? 0);
+        }
+
+        return dto;
     }
 
     private static SpawnDto ConvertedSpawnObj(Cell c, int pos)

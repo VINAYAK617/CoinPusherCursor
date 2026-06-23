@@ -63,18 +63,17 @@ internal static class K
     internal const double P_NONWIN_PRIZE_UPGRADE = 1.0;
 
     /// <summary>
-    /// Presentation-only chance that multiple EXTRA_SPIN tokens are folded into a
-    /// nested ReTrigger chain. When the roll misses, each EXTRA_SPIN remains a
-    /// normal board token and converts directly to filler.
+    /// Presentation-only chance that no-board-effect feature tokens are folded into
+    /// a nested ReTrigger chain under any board feature. When the roll misses, every
+    /// feature remains a normal physical spawn.
     /// </summary>
-    internal const double P_EXTRA_SPIN_RETRIGGER_CHAIN = 0.25;
+    internal const double P_FEATURE_RETRIGGER_CHAIN = 0.25;
 
     /// <summary>
-    /// Visual feature ids that an EXTRA_SPIN chain link may appear to convert into
-    /// while pointing at its nested ReTrigger. This avoids every chain step looking
-    /// like it simply becomes another EXTRA_SPIN.
+    /// Feature ids that may be used as intermediate ConvertToId values while a
+    /// ReTrigger chain points at another nested feature.
     /// </summary>
-    internal static readonly int[] EXTRA_SPIN_RETRIGGER_CONVERT_IDS =
+    internal static readonly int[] FEATURE_RETRIGGER_BRIDGE_IDS =
     {
         F_XSPIN,
         F_WHEEL,

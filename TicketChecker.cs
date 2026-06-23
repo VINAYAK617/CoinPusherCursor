@@ -400,17 +400,7 @@ public static class TicketChecker
                     cell.WheelStackValue = sp.Feature.WheelStackValue ?? 0;
                     cell.ReTrigger       = sp.Feature.ReTrigger ?? Array.Empty<FeatureDto>();
 
-                    if (sp.Feature.FeatureId == K.F_PRUP && sp.Feature.UpgradeSymbolId.HasValue)
-                    {
-                        // PRIZE_UPGRADE doesn't carry an explicit tier number in the
-                        // public schema — tier is inferred by COUNTING how many
-                        // PRIZE_UPGRADE tokens for this symbol have appeared so far,
-                        // in spawn order (matches PrupFeat.TryPlace's own internal
-                        // "nextTier = already + 1" logic exactly).
-                        int sym = sp.Feature.UpgradeSymbolId.Value;
-                        int next = result.PrupFinalTierPerSymbol.GetValueOrDefault(sym, 0) + 1;
-                        result.PrupFinalTierPerSymbol[sym] = next;
-                    }
+                    AccumulatePrizeUpgradeTokens(sp.Feature, result);
                 }
                 board[r, c] = cell;
             }
@@ -499,28 +489,20 @@ public static class TicketChecker
     }
 
     /// <summary>
-    /// Resolves the REAL eventual symbol a feature cell converts to. For most
-    /// features this is simply ConvertToId — but a chain-start EXTRA_SPIN token
-    /// (when several physical EXTRA_SPIN tokens got folded into one nested
-    /// ReTrigger chain for presentation — see TicketSerializer.BuildTurns) has
-    /// ConvertToId pointing at ANOTHER feature (F_XSPIN itself), as a deliberate
-    /// placeholder meaning "there is more chain to unwrap, look in ReTrigger" —
-    /// it is NOT "no valid target, fall back to filler". Walking to the deepest
-    /// nested link finds the actual final symbol, exactly matching what the
-    /// internal Cell.CvtSym already held before serialization folded multiple
-    /// tokens together. This was the root cause of a real, confirmed bug in an
-    /// earlier version of this checker (see the class-level doc comment).
+    /// Resolves the REAL eventual symbol a feature cell converts to. When a
+    /// ConvertToId points at another feature and ReTrigger contains that nested
+    /// feature, walk the chain until the deepest link's real conversion target.
     /// </summary>
     private static int ResolveConvert(ReplayCell fc)
     {
-        if (fc.FeatureId == K.F_XSPIN && fc.ConvertToId == K.F_XSPIN && fc.ReTrigger.Length > 0)
+        if (fc.ReTrigger.Length > 0)
         {
             var link = fc.ReTrigger[0];
-            while (link.ConvertToId == K.F_XSPIN && link.ReTrigger is { Length: > 0 })
+            while (link.ReTrigger is { Length: > 0 })
                 link = link.ReTrigger[0];
-            return link.ConvertToId > 0 && !K.IsFeat(link.ConvertToId) ? link.ConvertToId : K.F_COIN;
+            return link.ConvertToId > 0 ? link.ConvertToId : K.F_COIN;
         }
-        return fc.ConvertToId > 0 && !K.IsFeat(fc.ConvertToId) ? fc.ConvertToId : K.F_COIN;
+        return fc.ConvertToId > 0 ? fc.ConvertToId : K.F_COIN;
     }
 
     private static bool BoardHasFeatureCell(ReplayCell?[,] board)
@@ -548,10 +530,8 @@ public static class TicketChecker
     }
 
     /// <summary>
-    /// Counts every EXTRA_SPIN token across the whole ticket, walking each
-    /// chain-start spawn's nested ReTrigger array fully (only the FIRST
-    /// EXTRA_SPIN spawn in the ticket carries the chain; every later physical
-    /// token is folded inside it — see TicketSerializer.BuildTurns).
+    /// Counts every EXTRA_SPIN token across the whole ticket, walking nested
+    /// ReTrigger arrays no matter which feature started the chain.
     /// </summary>
     private static int CountExtraSpinChain(TicketDto t)
     {
@@ -559,21 +539,33 @@ public static class TicketChecker
         foreach (var turn in t.Turns)
         foreach (var sp in turn.Spawns ?? Array.Empty<SpawnDto>())
         {
-            if (sp.Feature?.FeatureId != K.F_XSPIN) continue;
-            count += 1 + CountReTrigger(sp.Feature.ReTrigger);
+            if (sp.Feature == null) continue;
+            count += CountFeatureId(sp.Feature, K.F_XSPIN);
         }
         return count;
+    }
 
-        static int CountReTrigger(FeatureDto[]? chain)
+    private static int CountFeatureId(FeatureDto feature, int featureId)
+    {
+        var count = feature.FeatureId == featureId ? 1 : 0;
+        foreach (var nested in feature.ReTrigger ?? Array.Empty<FeatureDto>())
+            count += CountFeatureId(nested, featureId);
+        return count;
+    }
+
+    private static void AccumulatePrizeUpgradeTokens(FeatureDto feature, ReplayResult result)
+    {
+        if (feature.FeatureId == K.F_PRUP && feature.UpgradeSymbolId.HasValue)
         {
-            if (chain == null || chain.Length == 0) return 0;
-            int n = 0;
-            foreach (var f in chain)
-            {
-                n += 1;
-                n += CountReTrigger(f.ReTrigger);
-            }
-            return n;
+            // PRIZE_UPGRADE doesn't carry an explicit tier number in the
+            // public schema — tier is inferred by COUNTING how many
+            // PRIZE_UPGRADE tokens for this symbol have appeared so far.
+            int sym = feature.UpgradeSymbolId.Value;
+            int next = result.PrupFinalTierPerSymbol.GetValueOrDefault(sym, 0) + 1;
+            result.PrupFinalTierPerSymbol[sym] = next;
         }
+
+        foreach (var nested in feature.ReTrigger ?? Array.Empty<FeatureDto>())
+            AccumulatePrizeUpgradeTokens(nested, result);
     }
 }
