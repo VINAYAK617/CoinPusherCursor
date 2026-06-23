@@ -469,7 +469,7 @@ public static class TicketChecker
                                 // entirely (not just un-stacked) — otherwise it
                                 // would still get counted once, un-multiplied,
                                 // whenever it eventually IS collected.
-                                if (!inNextZone) board[rr, cc] = new ReplayCell { Sym = K.F_COIN };
+                                if (!inNextZone) board[rr, cc] = new ReplayCell { Sym = FallbackSymbol(t, sym) };
                             }
                         }
                     }
@@ -495,7 +495,7 @@ public static class TicketChecker
     /// </summary>
     private static int ResolveConvert(ReplayCell fc)
     {
-        if (fc.ReTrigger.Length > 0)
+        if (K.IsFeat(fc.ConvertToId) && fc.ReTrigger.Length > 0)
         {
             var link = fc.ReTrigger[0];
             while (link.ReTrigger is { Length: > 0 })
@@ -567,5 +567,27 @@ public static class TicketChecker
 
         foreach (var nested in feature.ReTrigger ?? Array.Empty<FeatureDto>())
             AccumulatePrizeUpgradeTokens(nested, result);
+    }
+
+    private static int FallbackSymbol(TicketDto ticket, int avoidSym)
+    {
+        var winSyms = (ticket.WinInfo.WinSymbols ?? Array.Empty<WinSymbolDto>())
+            .Select(w => w.Id)
+            .ToHashSet();
+
+        var declaredNonWin = (ticket.WinInfo.NonWinSymbols ?? Array.Empty<NonWinSymbolDto>())
+            .Select(w => w.Id)
+            .FirstOrDefault(id => id != avoidSym && !K.IsFeat(id) && !winSyms.Contains(id));
+        if (declaredNonWin > 0) return declaredNonWin;
+
+        for (var id = 1; id <= 10; id++)
+        {
+            if (id != avoidSym && !winSyms.Contains(id) && !K.IsFeat(id))
+            {
+                return id;
+            }
+        }
+
+        return avoidSym;
     }
 }

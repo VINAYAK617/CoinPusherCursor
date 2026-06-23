@@ -326,7 +326,9 @@ public static class TicketSerializer
     {
         var chain = reTrigger ?? System.Array.Empty<FeatureDto>();
         var convertToId = chain.Length > 0
-            ? FeatureChainConvertId(c, depth, plan)
+            ? depth == 0
+                ? PhysicalChainConvertId(plan)
+                : FeatureChainConvertId(c, depth, plan)
             : c.CvtSym > 0 ? c.CvtSym : K.F_COIN;
 
         var dto = new FeatureDto
@@ -353,6 +355,18 @@ public static class TicketSerializer
         }
 
         return dto;
+    }
+
+    private static int PhysicalChainConvertId(GamePlan plan)
+    {
+        // This value becomes the actual board cell after the root token fires.
+        // Keep it count-safe: non-win/filler symbols only. Nested ReTrigger links
+        // may still use win symbols or feature ids for visual presentation.
+        return plan.NonWinTargets.Keys
+            .Concat(plan.FillSyms)
+            .FirstOrDefault(sym => sym > 0 && !plan.Targets.ContainsKey(sym) && !K.IsFeat(sym)) is var sym && sym > 0
+            ? sym
+            : K.F_COIN;
     }
 
     private static SpawnDto ConvertedSpawnObj(Cell c, int pos)

@@ -91,8 +91,11 @@ internal sealed class Scheduler
             //     in Builder also actively clears this symbol from those zone positions).
             if (remaining > 0)
             {
+                var fallbackCandidates = myLocks.Count > 0
+                    ? Enumerable.Range(lastFireSpin + 1, Math.Max(0, totalSpins - (lastFireSpin + 1)))
+                    : Enumerable.Range(0, totalSpins);
                 remaining = FillAcrossSlots(sym, remaining,
-                    Enumerable.Range(lastFireSpin + 1, Math.Max(0, totalSpins - (lastFireSpin + 1))),
+                    fallbackCandidates,
                     slots, tokenReserve);
             }
 

@@ -521,6 +521,11 @@ public sealed class Planner
         // dict before Placer ever runs — see PlanOnce), so no placement-side
         // change is needed, only declaring the higher tier here when eligible.
         int sym = eligible[0];
+        if (IsHighPressureTicket())
+        {
+            return new Dictionary<int, int> { { sym, 1 } };
+        }
+
         int tier = HasUpgradeTier(sym, 2) ? 2 : 1;
         return new Dictionary<int, int> { { sym, tier } };
     }

@@ -193,6 +193,7 @@ internal sealed class Placer
                          : new[] { target - offset, target + offset })
             {
                 if (spin < minS || spin >= maxS) continue;
+                if (ConflictsWithWheelSpin(feat, spin, done)) continue;
 
                 for (int col = 0; col < maxCol; col++)
                 {
@@ -210,6 +211,16 @@ internal sealed class Placer
         return null;
     }
 
+    private static bool ConflictsWithWheelSpin(Feat feat, int spin, IReadOnlyList<PlacedFeat> done)
+    {
+        if (feat.Id == "WHEEL")
+        {
+            return done.Any(f => f.Spin == spin && FeatReg.Has(f.Id) && FeatReg.Get(f.Id).HasToken);
+        }
+
+        return done.Any(f => f.Spin == spin && f.Id == "WHEEL");
+    }
+
     private PlacedFeat? TryPlace(string id, int minS, int maxS,
                                   List<PlacedFeat> done, HashSet<(int, int)> used)
     {
@@ -219,6 +230,7 @@ internal sealed class Placer
         {
             int spin = _rng.Next(minS, maxS);
             int col  = _rng.Next(0, K.COLS);
+            if (ConflictsWithWheelSpin(feat, spin, done)) continue;
             var r    = feat.TryPlace(new PlaceCtx
             {
                 Spin=spin, Col=col, Done=done, Rng=_rng,
