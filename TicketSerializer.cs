@@ -360,11 +360,14 @@ public static class TicketSerializer
     private static int PhysicalChainConvertId(GamePlan plan)
     {
         // This value becomes the actual board cell after the root token fires.
-        // Keep it count-safe: non-win/filler symbols only. Nested ReTrigger links
-        // may still use win symbols or feature ids for visual presentation.
-        return plan.NonWinTargets.Keys
-            .Concat(plan.FillSyms)
-            .FirstOrDefault(sym => sym > 0 && !plan.Targets.ContainsKey(sym) && !K.IsFeat(sym)) is var sym && sym > 0
+        // Keep it count-safe: ordinary filler first, not declared win/non-win.
+        // Nested ReTrigger links may still use win/non-win symbols or feature ids
+        // for visual presentation because they are not physical board cells.
+        return plan.FillSyms
+            .FirstOrDefault(sym => sym > 0
+                                   && !plan.Targets.ContainsKey(sym)
+                                   && !plan.NonWinTargets.ContainsKey(sym)
+                                   && !K.IsFeat(sym)) is var sym && sym > 0
             ? sym
             : K.F_COIN;
     }

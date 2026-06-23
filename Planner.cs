@@ -238,7 +238,7 @@ public sealed class Planner
         // symbol's collection is never load-bearing for feasibility.
         if (nonWinTargets.Count > 0)
         {
-            foreach (var sym in nonWinTargets.Where(kv => kv.Value >= 2).Select(kv => kv.Key))
+            foreach (var sym in nonWinTargets.Where(kv => kv.Value >= 2).OrderBy(_ => _rng.Next()).Select(kv => kv.Key).Take(1))
             {
                 if (wheels >= FeatReg.Cfg["WHEEL"].Max) break;
                 if (_rng.NextDouble() >= K.P_NONWIN_WHEEL) continue;
@@ -348,7 +348,7 @@ public sealed class Planner
         // is reached.
         int addedWheels = 0;
         int wheelBudget = FeatReg.Cfg["WHEEL"].Max - existingWheels;
-        foreach (var sym in nonWinTargets.Where(kv => kv.Value >= 2).Select(kv => kv.Key))
+        foreach (var sym in nonWinTargets.Where(kv => kv.Value >= 2).OrderBy(_ => _rng.Next()).Select(kv => kv.Key).Take(1))
         {
             if (addedWheels >= wheelBudget) break;
             if (_rng.NextDouble() >= K.P_NONWIN_WHEEL) continue;
@@ -497,20 +497,8 @@ public sealed class Planner
         if (eligible.Count == 0) return new Dictionary<int, int>();
         if (_rng.NextDouble() >= K.P_NONWIN_PRIZE_UPGRADE) return new Dictionary<int, int>();
 
-        // Climb to tier 2 (not just tier 1) when the symbol's own ladder actually
-        // has a tier-2 amount to show — PrupFeat.TryPlace already handles multi-
-        // tier targets generically for ANY symbol in PrizeTiers (win or near-miss
-        // alike, since near-miss symbols are merged into the scheduling Targets
-        // dict before Placer ever runs — see PlanOnce), so no placement-side
-        // change is needed, only declaring the higher tier here when eligible.
         int sym = eligible[0];
-        if (IsHighPressureTicket())
-        {
-            return new Dictionary<int, int> { { sym, 1 } };
-        }
-
-        int tier = HasUpgradeTier(sym, 2) ? 2 : 1;
-        return new Dictionary<int, int> { { sym, tier } };
+        return new Dictionary<int, int> { { sym, 1 } };
     }
 
     /// <summary>

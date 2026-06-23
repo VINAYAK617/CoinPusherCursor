@@ -574,19 +574,23 @@ public static class TicketChecker
         var winSyms = (ticket.WinInfo.WinSymbols ?? Array.Empty<WinSymbolDto>())
             .Select(w => w.Id)
             .ToHashSet();
-
-        var declaredNonWin = (ticket.WinInfo.NonWinSymbols ?? Array.Empty<NonWinSymbolDto>())
+        var nonWinSyms = (ticket.WinInfo.NonWinSymbols ?? Array.Empty<NonWinSymbolDto>())
             .Select(w => w.Id)
-            .FirstOrDefault(id => id != avoidSym && !K.IsFeat(id) && !winSyms.Contains(id));
-        if (declaredNonWin > 0) return declaredNonWin;
+            .ToHashSet();
 
+        // Match engine behavior as closely as the public ticket allows: WHEEL
+        // isolation converts stray stacked cells to ordinary filler, not to a
+        // declared near-miss symbol whose count is itself under test.
         for (var id = 1; id <= 10; id++)
         {
-            if (id != avoidSym && !winSyms.Contains(id) && !K.IsFeat(id))
+            if (id != avoidSym && !winSyms.Contains(id) && !nonWinSyms.Contains(id) && !K.IsFeat(id))
             {
                 return id;
             }
         }
+
+        var declaredNonWin = nonWinSyms.FirstOrDefault(id => id != avoidSym && !K.IsFeat(id) && !winSyms.Contains(id));
+        if (declaredNonWin > 0) return declaredNonWin;
 
         return avoidSym;
     }
