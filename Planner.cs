@@ -110,7 +110,7 @@ public sealed class Planner
         var placed      = new Placer(schedulingInp, _rng, log).Place();
         int totalSpins  = effectiveInp.BaseSpins + placed.Count(f => f.Id == "EXTRA_SPIN");
         var locks       = BuildLocks(placed, log, allocTargets);
-        var allocs      = new Scheduler(allocTargets, placed, locks, log).Schedule(totalSpins);
+        var allocs      = new Scheduler(allocTargets, placed, locks, log, winSyms).Schedule(totalSpins);
         var fillTracker = new FillTracker(fillSyms.ToArray());
         var builder     = new Builder(allocTargets, locks, placed,
                                        fillSyms.ToArray(), log, _rng, fillTracker, decorBudget);
@@ -239,7 +239,7 @@ public sealed class Planner
         // when the limit allows more. Purely cosmetic — unlike win-symbol WHEEL
         // above, there is no "needed" override here at all, since a near-miss
         // symbol's collection is never load-bearing for feasibility.
-        if (allowOptionalFeatures)
+        if (nonWinTargets.Count > 0)
         {
             foreach (var sym in nonWinTargets.Where(kv => kv.Value >= 2).Select(kv => kv.Key))
             {
@@ -433,21 +433,50 @@ public sealed class Planner
         // infeasible and the normal retry loop handles it, exactly as it
         // already does for any other infeasible combination.
         //
-        // High-pressure tickets already need the full board budget for guaranteed
-        // win delivery. Near-miss symbols are player-experience decoration, not a
-        // hard payout contract, so do not let them compete with required wins.
+        // High-pressure tickets already need most of the board budget for
+        // guaranteed win delivery. A small near-miss may still appear, but only by
+        // probability and at a lower target band.
         if (IsHighPressureTicket())
+        {
+            if (_rng.NextDouble() >= K.P_HIGH_PRESSURE_NONWIN_TARGET)
+            {
+                return new Dictionary<int, int>();
+            }
+
+            int sym = fillSyms[_rng.Next(fillSyms.Count)];
+            int target = _rng.Next(
+                K.HIGH_PRESSURE_NONWIN_MIN_TARGET,
+                Math.Min(K.HIGH_PRESSURE_NONWIN_MAX_TARGET, K.FILL_CAP - 1) + 1);
+            return new Dictionary<int, int> { { sym, target } };
+        }
+
+        var profile = PickNonWinProfile();
+        if (profile.MaxSymbols <= 0 || profile.Max <= 0)
         {
             return new Dictionary<int, int>();
         }
 
-        int count = _rng.Next(1, Math.Min(3, fillSyms.Count) + 1);
-        int maxPerSymbol = K.FILL_CAP - 1;
+        int count = _rng.Next(1, Math.Min(profile.MaxSymbols, fillSyms.Count) + 1);
+        int minTarget = Math.Min(profile.Min, K.FILL_CAP - 1);
+        int maxTarget = Math.Min(profile.Max, K.FILL_CAP - 1);
 
         return fillSyms
             .OrderBy(_ => _rng.Next())
             .Take(count)
-            .ToDictionary(sym => sym, _ => _rng.Next(K.NONWIN_MIN_TARGET, maxPerSymbol + 1));
+            .ToDictionary(sym => sym, _ => _rng.Next(minTarget, maxTarget + 1));
+    }
+
+    private (double P, int Min, int Max, int MaxSymbols) PickNonWinProfile()
+    {
+        var roll = _rng.NextDouble();
+        var acc = 0.0;
+        foreach (var profile in K.NONWIN_TARGET_PROFILES)
+        {
+            acc += profile.P;
+            if (roll <= acc) return profile;
+        }
+
+        return K.NONWIN_TARGET_PROFILES[^1];
     }
 
     private Dictionary<int, int> ResolveNonWinPrizeTiers(IReadOnlyDictionary<int, int> nonWinTargets)

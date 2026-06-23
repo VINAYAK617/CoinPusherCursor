@@ -23,10 +23,15 @@ internal sealed class Scheduler
     private readonly List<PlacedFeat>              _placed;
     private readonly IReadOnlyList<WLock>          _locks;
     private readonly List<string>                  _log;
+    private readonly HashSet<int>                  _winSyms;
 
     internal Scheduler(IReadOnlyDictionary<int, int> targets,
-                       List<PlacedFeat> placed, IReadOnlyList<WLock> locks, List<string> log)
-    { _targets=targets; _placed=placed; _locks=locks; _log=log; }
+                       List<PlacedFeat> placed, IReadOnlyList<WLock> locks, List<string> log,
+                       IEnumerable<int>? winSyms = null)
+    {
+        _targets=targets; _placed=placed; _locks=locks; _log=log;
+        _winSyms = winSyms != null ? new HashSet<int>(winSyms) : targets.Keys.ToHashSet();
+    }
 
     internal List<Dictionary<int, int>> Schedule(int totalSpins)
     {
@@ -61,10 +66,22 @@ internal sealed class Scheduler
             int remaining = Math.Max(0, target - effectivePost);
             int lastFireSpin = myLocks.Count > 0 ? myLocks[^1].FireSpin : 0;
             int deadline      = myLocks.Count > 0 ? myLocks[0].FireSpin - 1 : totalSpins;
+            var lateSlots = ShouldUseLateCompletion(sym, target, totalSpins)
+                ? LateSlots(totalSpins, lastFireSpin).ToHashSet()
+                : new HashSet<int>();
+
+            if (lateSlots.Count > 0 && remaining > 0)
+            {
+                var tailWanted = Math.Min(remaining, LateTailCount(target));
+                var tailLeft = FillAcrossSlots(sym, tailWanted, lateSlots, slots, tokenReserve);
+                remaining -= tailWanted - tailLeft;
+            }
 
             // Pass 1: fill pre-deadline spins (normal EDF — before the symbol's first WHEEL fires).
             // Spread across the least-loaded eligible spins instead of filling spin 1 to capacity.
-            remaining = FillAcrossSlots(sym, remaining, Enumerable.Range(0, deadline), slots, tokenReserve);
+            remaining = FillAcrossSlots(sym, remaining,
+                Enumerable.Range(0, deadline).Where(s => !lateSlots.Contains(s)),
+                slots, tokenReserve);
 
             // Pass 2: post-deadline fallback. The symbol can still be collected normally
             // (unstacked) in spins after its WHEEL(s) fire — scan forward from just after
@@ -123,7 +140,7 @@ internal sealed class Scheduler
                 .Select(s => (Slot: s, Cap: Cap(s, slots, tokenReserve), Load: slots[s].Values.Sum()))
                 .Where(x => x.Cap > 0)
                 .OrderBy(x => x.Load)
-                .ThenBy(x => x.Slot)
+                .ThenBy(x => SlotTieBreak(sym, x.Slot))
                 .FirstOrDefault();
 
             if (best.Cap <= 0) break;
@@ -137,4 +154,46 @@ internal sealed class Scheduler
 
     private static void Add(Dictionary<int, int> d, int k, int v)
     { if (v <= 0) return; d.TryGetValue(k, out int ex); d[k] = ex + v; }
+
+    private bool ShouldUseLateCompletion(int sym, int target, int totalSpins)
+    {
+        if (!_winSyms.Contains(sym) || totalSpins <= 2) return false;
+        return UnitHash(sym, target, totalSpins, _placed.Count) < K.P_WIN_LATE_COMPLETION;
+    }
+
+    private static int LateTailCount(int target) =>
+        Math.Max(K.WIN_LATE_MIN_TAIL, (int)Math.Ceiling(target * K.WIN_LATE_TAIL_FRACTION));
+
+    private static IEnumerable<int> LateSlots(int totalSpins, int lastFireSpin)
+    {
+        var firstLate = Math.Max(0, totalSpins - K.WIN_LATE_TAIL_SPINS);
+        for (int slot = firstLate; slot < totalSpins; slot++)
+        {
+            if (slot > lastFireSpin) yield return slot;
+        }
+    }
+
+    private static int SlotTieBreak(int sym, int slot)
+    {
+        unchecked
+        {
+            var hash = 17;
+            hash = hash * 31 + sym;
+            hash = hash * 31 + slot;
+            return hash & 0x7fffffff;
+        }
+    }
+
+    private static double UnitHash(int a, int b, int c, int d)
+    {
+        unchecked
+        {
+            var hash = 23;
+            hash = hash * 31 + a;
+            hash = hash * 31 + b;
+            hash = hash * 31 + c;
+            hash = hash * 31 + d;
+            return (hash & 0x7fffffff) / (double)int.MaxValue;
+        }
+    }
 }

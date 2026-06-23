@@ -62,6 +62,30 @@ internal static class K
     /// turns the symbol into an actual payout target.</summary>
     internal const double P_NONWIN_PRIZE_UPGRADE = 1.0;
 
+    /// <summary>Most tickets should not reveal every winning objective in the
+    /// first few spins. This controls how often win-symbol allocations reserve a
+    /// tail portion for the final spins.</summary>
+    internal const double P_WIN_LATE_COMPLETION = 0.90;
+    internal const int WIN_LATE_TAIL_SPINS = 2;
+    internal const int WIN_LATE_MIN_TAIL = 2;
+    internal const double WIN_LATE_TAIL_FRACTION = 0.20;
+
+    /// <summary>Near-miss target profiles. Probability, min target, max target,
+    /// max symbols. The zero-target row means no near-miss on that ticket.</summary>
+    internal static readonly (double P, int Min, int Max, int MaxSymbols)[] NONWIN_TARGET_PROFILES =
+    {
+        (0.10, 0, 0, 0),
+        (0.25, 10, 14, 1),
+        (0.45, 15, 17, 2),
+        (0.20, 18, 19, 3),
+    };
+
+    /// <summary>High-pressure tickets may still show a near-miss, but less often
+    /// and with a smaller footprint so it does not steal guaranteed-win capacity.</summary>
+    internal const double P_HIGH_PRESSURE_NONWIN_TARGET = 0.85;
+    internal const int HIGH_PRESSURE_NONWIN_MIN_TARGET = 7;
+    internal const int HIGH_PRESSURE_NONWIN_MAX_TARGET = 9;
+
     /// <summary>
     /// Presentation-only chance that no-board-effect feature tokens are folded into
     /// a nested ReTrigger chain under any board feature. When the roll misses, every
