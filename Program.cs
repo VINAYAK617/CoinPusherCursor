@@ -1,4 +1,5 @@
 using CoinPusherEngine;
+using System.Diagnostics;
 
 Console.OutputEncoding = System.Text.Encoding.UTF8;
 if (args.Length > 0 && args[0] == "selftest") { StressTest.Run(); return; }
@@ -40,21 +41,57 @@ static void RunVolumeTest(int count, int seed)
     var retriggerTickets = 0;
     var maxWheelStackValue = 0;
     var totalWarnings = 0;
+    var stopwatch = Stopwatch.StartNew();
+    long planMs = 0, internalMs = 0, serializeMs = 0, checkerMs = 0;
+    var inputAttempts = 0;
+    var maxInputAttempts = 0;
+    var plannerAttempts = 0;
+    var maxPlannerAttempts = 0;
+    var localAttempts = 0;
+    var maxLocalAttempts = 0;
+    var gate = new object();
+    var completed = 0;
+    var progressStep = Math.Max(1, count / 10);
 
     Console.WriteLine($"CoinPusherEngine volume test: {count} random tickets, seed={seed}");
 
-    for (var index = 0; index < count; index++)
+    Parallel.For(0, count, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount }, index =>
     {
+        var localRng = new Random(VolumeSeed(seed, index));
         var plannerSeed = seed + index;
         try
         {
-            var plan = GenerateRandomValidPlan(rng, plannerSeed);
-            VerifyInternalReplay(plan);
+            var step = Stopwatch.StartNew();
+            var plan = GenerateRandomValidPlan(localRng, plannerSeed, out var attemptsUsed);
+            step.Stop();
+            Interlocked.Add(ref planMs, step.ElapsedMilliseconds);
+            Interlocked.Add(ref inputAttempts, attemptsUsed);
+            var planAttempts = PlannerAttempts(plan);
+            Interlocked.Add(ref plannerAttempts, planAttempts);
+            var suffixAttempts = LocalSuffixAttempts(plan);
+            Interlocked.Add(ref localAttempts, suffixAttempts);
+            lock (gate)
+            {
+                maxInputAttempts = Math.Max(maxInputAttempts, attemptsUsed);
+                maxPlannerAttempts = Math.Max(maxPlannerAttempts, planAttempts);
+                maxLocalAttempts = Math.Max(maxLocalAttempts, suffixAttempts);
+            }
 
+            step.Restart();
+            VerifyInternalReplay(plan);
+            step.Stop();
+            Interlocked.Add(ref internalMs, step.ElapsedMilliseconds);
+
+            step.Restart();
             var ticket = TicketSerializer.ToTicketObject(plan);
             VerifyTicketShape(ticket);
+            step.Stop();
+            Interlocked.Add(ref serializeMs, step.ElapsedMilliseconds);
 
+            step.Restart();
             var report = TicketChecker.CheckTicket(ticket);
+            step.Stop();
+            Interlocked.Add(ref checkerMs, step.ElapsedMilliseconds);
             var failure = report.Checks.FirstOrDefault(check => check.Result == TicketChecker.Status.Fail);
             if (failure != null)
             {
@@ -62,37 +99,54 @@ static void RunVolumeTest(int count, int seed)
                     $"TicketChecker failed {failure.Category}/{failure.Name}: {failure.Detail}");
             }
 
-            totalWarnings += report.Checks.Count(check => check.Result == TicketChecker.Status.Warning);
-            spinCounts[ticket.WinInfo.TotalSpins] = spinCounts.GetValueOrDefault(ticket.WinInfo.TotalSpins) + 1;
-            if (ticket.WinInfo.NonWinSymbols.Length > 0) nonWinTickets++;
-
             var hasRetrigger = false;
+            var ticketFeatureCounts = new Dictionary<int, int>();
+            var ticketMaxWheelStack = 0;
             foreach (var turn in ticket.Turns)
             foreach (var spawn in turn.Spawns)
             {
                 if (spawn.Feature == null) continue;
-                CountFeature(spawn.Feature, featureCounts);
+                CountFeature(spawn.Feature, ticketFeatureCounts);
                 hasRetrigger |= spawn.Feature.ReTrigger.Length > 0;
                 if (spawn.Feature.WheelStackValue.HasValue)
-                    maxWheelStackValue = Math.Max(maxWheelStackValue, spawn.Feature.WheelStackValue.Value);
+                    ticketMaxWheelStack = Math.Max(ticketMaxWheelStack, spawn.Feature.WheelStackValue.Value);
             }
-            if (hasRetrigger) retriggerTickets++;
+
+            lock (gate)
+            {
+                totalWarnings += report.Checks.Count(check => check.Result == TicketChecker.Status.Warning);
+                spinCounts[ticket.WinInfo.TotalSpins] = spinCounts.GetValueOrDefault(ticket.WinInfo.TotalSpins) + 1;
+                if (ticket.WinInfo.NonWinSymbols.Length > 0) nonWinTickets++;
+                if (hasRetrigger) retriggerTickets++;
+                maxWheelStackValue = Math.Max(maxWheelStackValue, ticketMaxWheelStack);
+                foreach (var (featureId, amount) in ticketFeatureCounts)
+                {
+                    featureCounts[featureId] = featureCounts.GetValueOrDefault(featureId) + amount;
+                }
+            }
         }
         catch (Exception ex)
         {
             var message = $"#{index} plannerSeed={plannerSeed}: {ex.InnerException?.Message ?? ex.Message}";
-            failures.Add(message);
-            if (failures.Count <= 20)
+            lock (gate)
             {
-                Console.WriteLine("FAIL " + message);
+                failures.Add(message);
+                if (failures.Count <= 20)
+                {
+                    Console.WriteLine("FAIL " + message);
+                }
             }
         }
 
-        if ((index + 1) % Math.Max(1, count / 10) == 0)
+        var done = Interlocked.Increment(ref completed);
+        if (done % progressStep == 0)
         {
-            Console.WriteLine($"progress {index + 1}/{count} failures={failures.Count}");
+            lock (gate)
+            {
+                Console.WriteLine($"progress {done}/{count} failures={failures.Count}");
+            }
         }
-    }
+    });
 
     Console.WriteLine("==== VOLUME TEST SUMMARY ====");
     Console.WriteLine($"tickets={count}");
@@ -103,6 +157,11 @@ static void RunVolumeTest(int count, int seed)
     Console.WriteLine($"maxWheelStackValue={maxWheelStackValue}");
     Console.WriteLine("spins=" + string.Join(",", spinCounts.OrderBy(kv => kv.Key).Select(kv => $"{kv.Key}:{kv.Value}")));
     Console.WriteLine("features=" + string.Join(",", featureCounts.OrderBy(kv => kv.Key).Select(kv => $"{kv.Key}:{kv.Value}")));
+    Console.WriteLine($"elapsedMs={stopwatch.ElapsedMilliseconds}");
+    Console.WriteLine($"planMs={planMs} internalReplayMs={internalMs} serializeMs={serializeMs} ticketCheckerMs={checkerMs}");
+    Console.WriteLine($"inputAttempts={inputAttempts} avgInputAttempts={(count == 0 ? 0 : inputAttempts / (double)count):F2} maxInputAttempts={maxInputAttempts}");
+    Console.WriteLine($"plannerAttempts={plannerAttempts} avgPlannerAttempts={(count == 0 ? 0 : plannerAttempts / (double)count):F2} maxPlannerAttempts={maxPlannerAttempts}");
+    Console.WriteLine($"localSuffixAttempts={localAttempts} avgLocalSuffixAttempts={(count == 0 ? 0 : localAttempts / (double)count):F2} maxLocalSuffixAttempts={maxLocalAttempts}");
 
     if (failures.Count > 0)
     {
@@ -113,11 +172,43 @@ static void RunVolumeTest(int count, int seed)
     }
 }
 
-static GamePlan GenerateRandomValidPlan(Random rng, int plannerSeed)
+static int VolumeSeed(int seed, int index)
+{
+    unchecked
+    {
+        uint x = (uint)seed;
+        x ^= (uint)(index + 1) * 0x9E3779B9u;
+        x ^= x >> 16;
+        x *= 0x85EBCA6Bu;
+        x ^= x >> 13;
+        x *= 0xC2B2AE35u;
+        x ^= x >> 16;
+        return (int)x;
+    }
+}
+
+static int PlannerAttempts(GamePlan plan)
+{
+    var marker = plan.Log.FirstOrDefault(line => line.StartsWith("planned after ", StringComparison.Ordinal));
+    if (marker == null) return 1;
+    var parts = marker.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+    return parts.Length >= 3 && int.TryParse(parts[2], out var attempts) ? attempts : 1;
+}
+
+static int LocalSuffixAttempts(GamePlan plan)
+{
+    var marker = plan.Log.FirstOrDefault(line => line.StartsWith("local realization succeeded after ", StringComparison.Ordinal));
+    if (marker == null) return 1;
+    var parts = marker.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+    return parts.Length >= 5 && int.TryParse(parts[4], out var attempts) ? attempts : 1;
+}
+
+static GamePlan GenerateRandomValidPlan(Random rng, int plannerSeed, out int attemptsUsed)
 {
     Exception? lastPlanningFailure = null;
     for (var attempt = 0; attempt < 50; attempt++)
     {
+        attemptsUsed = attempt + 1;
         var input = RandomInput(rng);
         try
         {
@@ -133,6 +224,7 @@ static GamePlan GenerateRandomValidPlan(Random rng, int plannerSeed)
         }
     }
 
+    attemptsUsed = 50;
     throw new InvalidOperationException(
         "Unable to generate a random valid ticket after 50 input attempts.",
         lastPlanningFailure);
@@ -160,12 +252,15 @@ static MathInput RandomInput(Random rng)
     }
 
     var required = new Dictionary<string, int>();
-    if (rng.NextDouble() < 0.20) required["WHEEL"] = rng.Next(1, Math.Min(2, winCount) + 1);
-    if (rng.NextDouble() < 0.15) required["FLUSH"] = 1;
-    if (rng.NextDouble() < 0.15) required["EXTRA_SPIN"] = rng.Next(1, 3);
+    // Keep random volume inputs feasible; the planner still adds WHEEL/FLUSH/
+    // EXTRA_SPIN naturally through optional and capacity-driven paths. Forced
+    // feature combinations are covered by StressTest's named scenarios.
+    if (rng.NextDouble() < 0.05) required["WHEEL"] = 1;
+    if (rng.NextDouble() < 0.03) required["FLUSH"] = 1;
+    if (rng.NextDouble() < 0.03) required["EXTRA_SPIN"] = 1;
 
     Dictionary<int, int>? prizeTiers = null;
-    if (rng.NextDouble() < 0.15)
+    if (rng.NextDouble() < 0.08)
     {
         prizeTiers = new Dictionary<int, int>();
         var sym = winSymbols[rng.Next(winSymbols.Length)];
