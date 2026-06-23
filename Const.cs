@@ -18,6 +18,8 @@ internal static class K
     // of 8 total spins per ticket.
     internal const int BASE_SPINS = 5;
     internal const int MAX_SPINS  = 8;
+    internal const int MIN_WHEEL_STACK_VALUE = 1;
+    internal const int MAX_WHEEL_STACK_VALUE = 3;
 
     // ── Optional-feature probability ──────────────────────────────────────
     //

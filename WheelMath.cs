@@ -7,9 +7,11 @@ internal static class WMath
     internal static int BestN(int target)
     {
         int bestN = 1, bestPost = 0, bestZone = 0;
+        var maxStack = K.MAX_WHEEL_STACK_VALUE + 1;
         for (int n = 1; n <= 6; n++)
         {
             int stack = 1 << n;
+            if (stack > maxStack) break;
             int zone  = Zone(target, stack);
             int post = zone * stack;
             if (zone < 1 || post > target) continue;

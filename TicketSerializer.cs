@@ -274,7 +274,10 @@ public static class TicketSerializer
                     WheelSymbolId = c.Fp?.WheelSym ?? 0,
                     // Public JSON uses bonus semantics: N means a collected cell counts
                     // as 1 + N. Internally Fp.WheelStack stores the total stack value.
-                    WheelStackValue = Math.Max(0, (c.Fp?.WheelStack ?? 1) - 1)
+                    WheelStackValue = Math.Clamp(
+                        Math.Max(0, (c.Fp?.WheelStack ?? 1) - 1),
+                        K.MIN_WHEEL_STACK_VALUE,
+                        K.MAX_WHEEL_STACK_VALUE)
                 }
             },
             K.F_XSPIN => new SpawnDto
