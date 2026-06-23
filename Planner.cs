@@ -10,6 +10,7 @@ public sealed class Planner
 {
     private readonly MathInput _inp;
     private readonly int       _baseSeed;
+    private readonly IPlanAssemblyPipeline _assemblyPipeline;
     private Random             _rng;
     private static readonly Random SeedRng = new();
     private static readonly object SeedLock = new();
@@ -22,8 +23,14 @@ public sealed class Planner
     private const int    MaxPlanAttempts = 4096;
 
     public Planner(MathInput inp, int? seed = null)
+        : this(inp, seed, new DefaultPlanAssemblyPipeline())
+    {
+    }
+
+    internal Planner(MathInput inp, int? seed, IPlanAssemblyPipeline assemblyPipeline)
     {
         _inp = inp;
+        _assemblyPipeline = assemblyPipeline;
         _baseSeed = seed ?? NextSeed();
         _rng = new Random(_baseSeed);
     }
@@ -111,37 +118,27 @@ public sealed class Planner
         int totalSpins  = effectiveInp.BaseSpins + placed.Count(f => f.Id == "EXTRA_SPIN");
         var locks       = BuildLocks(placed, log, allocTargets);
         var allocs      = new Scheduler(allocTargets, placed, locks, log, winSyms).Schedule(totalSpins);
-        var fillTracker = new FillTracker(fillSyms.ToArray());
-        var builder     = new Builder(allocTargets, locks, placed,
-                                       fillSyms.ToArray(), log, _rng, fillTracker, decorBudget);
-        var spins       = builder.BuildAll(placed, allocs, totalSpins, effectiveInp.BaseSpins);
-
-        new Resolver(fillSyms.ToArray(), winSet, log, _rng, fillTracker, nonWinTargets.Keys).Resolve(spins);
-
         var prizeTiers = _inp.PrizeTiers != null
             ? _inp.PrizeTiers.ToDictionary(kv => kv.Key, kv => kv.Value)
             : new Dictionary<int, int>();
         var prizeValues = ClonePrizeValues(_inp.PrizeValues);
-
-        var plan = new GamePlan
-        {
-            TotalSpins = totalSpins,
-            Targets    = effectiveInp.Targets,
-            WinSyms    = winSyms,
-            FillSyms   = fillSyms,
-            PrizeTiers = prizeTiers,
-            PrizeValues = prizeValues,
-            NonWinTargets = nonWinTargets,
-            NonWinPrizeTiers = nonWinPrizeTiers,
-            Spins      = spins,
-            Log        = log,
-        };
-
-        Verifier.Check(plan);
-        plan.Verified = true;
-        log.Add("verified OK");
-
-        return plan;
+        return _assemblyPipeline.Assemble(new PlanAssemblyRequest(
+            _inp,
+            effectiveInp.Targets,
+            winSyms,
+            fillSyms,
+            nonWinTargets,
+            nonWinPrizeTiers,
+            prizeTiers,
+            prizeValues,
+            placed,
+            locks,
+            allocs,
+            totalSpins,
+            effectiveInp.BaseSpins,
+            decorBudget,
+            _rng.Next(),
+            log));
     }
 
     private static int AttemptSeed(int seed, int attempt)
