@@ -12,6 +12,7 @@ public sealed class Planner
     private readonly int       _baseSeed;
     private readonly IPlanAssemblyPipeline _assemblyPipeline;
     private Random             _rng;
+    private int                _attemptIndex;
     private static readonly Random SeedRng = new();
     private static readonly object SeedLock = new();
 
@@ -47,6 +48,7 @@ public sealed class Planner
         Exception? last = null;
         for (int attempt = 0; attempt < MaxPlanAttempts; attempt++)
         {
+            _attemptIndex = attempt;
             _rng = new Random(AttemptSeed(_baseSeed, attempt));
             try
             {
@@ -106,7 +108,7 @@ public sealed class Planner
         };
 
         log.Add($"wins=[{string.Join(",", winSyms)}] fills=[{string.Join(",", fillSyms)}]");
-        if (nonWinTargets.Count > 0)
+        if (nonWinTargets.Count > 0 && !SuppressOptionalNonWinFeatures)
             log.Add($"nonWins=[{string.Join(",", nonWinTargets.Select(kv=>$"sym{kv.Key}>={kv.Value}<cap{K.FILL_CAP}"))}]");
         if (nonWinPrizeTiers.Count > 0)
             log.Add($"nonWinPrizeUpgrades=[{string.Join(",", nonWinPrizeTiers.Select(kv=>$"sym{kv.Key}@tier{kv.Value}"))}]");
@@ -433,6 +435,14 @@ public sealed class Planner
         // already does for any other infeasible combination.
         //
         var profile = PickNonWinProfile();
+        if (SimplifyNonWinTargets)
+        {
+            profile = (1.0, 10, 14, 1);
+        }
+        if (SuppressNonWinTargets)
+        {
+            return new Dictionary<int, int>();
+        }
         if (profile.MaxSymbols <= 0 || profile.Max <= 0)
         {
             return new Dictionary<int, int>();
@@ -490,6 +500,11 @@ public sealed class Planner
         // populated for every symbol in the game, not just win symbols) rather than
         // inferred from anything else, so it can never drift out of sync with what
         // TicketSerializer will actually be able to look up.
+        if (SuppressOptionalNonWinFeatures)
+        {
+            return new Dictionary<int, int>();
+        }
+
         var eligible = nonWinTargets.Where(kv => kv.Value >= 1 && HasUpgradeTier(kv.Key, 1))
                                      .Select(kv => kv.Key)
                                      .OrderBy(_ => _rng.Next())
@@ -519,6 +534,12 @@ public sealed class Planner
         _inp.Targets.Count >= 4
         || _inp.Targets.Values.Sum() >= 80
         || _inp.Required.GetValueOrDefault("PRIZE_UPGRADE") >= 4;
+
+    private bool SuppressOptionalNonWinFeatures => _attemptIndex >= 1;
+
+    private bool SimplifyNonWinTargets => _attemptIndex >= 1;
+
+    private bool SuppressNonWinTargets => _attemptIndex >= 2;
 
     private static Dictionary<int, IReadOnlyDictionary<int, decimal>> ClonePrizeValues(
         IReadOnlyDictionary<int, IReadOnlyDictionary<int, decimal>>? prizeValues) =>
