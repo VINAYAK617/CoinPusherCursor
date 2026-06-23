@@ -38,7 +38,7 @@ internal static class CapacityModel
     // ── Physical win cell count ────────────────────────────────────────────
     /// <summary>
     /// Without WHEEL: every win requires 1 physical collected cell.
-    /// With WHEEL on target T (stack = 2^BestN): physical = zone + pre
+    /// With WHEEL on target T (stack = 1 + WheelStackValue): physical = zone + pre
     ///   where zone = min(T/stack, COLS-1), pre = max(0, T − zone×stack).
     /// Applied greedily to the highest-target symbols first.
     /// </summary>
@@ -52,7 +52,7 @@ internal static class CapacityModel
             if (i < wheelCount)
             {
                 int n     = WMath.BestN(tgt);
-                int stack = 1 << n;
+                int stack = WMath.StackFromValue(n);
                 int zone  = WMath.Zone(tgt, stack);
                 total    += zone + Math.Max(0, tgt - zone * stack);
             }

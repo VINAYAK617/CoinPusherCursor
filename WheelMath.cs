@@ -2,28 +2,43 @@ namespace CoinPusherEngine;
 
 internal static class WMath
 {
-    // Best power-of-two stack that maximizes safe WHEEL contribution without
-    // exceeding the target. Ties prefer more visible zone cells.
-    internal static int BestN(int target)
+    // Best public WheelStackValue (1..3) that maximizes safe WHEEL contribution
+    // without exceeding the target. Public value N means collected stack 1 + N.
+    internal static int BestStackValue(int target)
     {
-        int bestN = 1, bestPost = 0, bestZone = 0;
-        var maxStack = K.MAX_WHEEL_STACK_VALUE + 1;
-        for (int n = 1; n <= 6; n++)
+        int bestValue = K.MIN_WHEEL_STACK_VALUE, bestPost = 0, bestZone = 0;
+        foreach (var value in ValidStackValues(target))
         {
-            int stack = 1 << n;
-            if (stack > maxStack) break;
+            int stack = StackFromValue(value);
             int zone  = Zone(target, stack);
             int post = zone * stack;
-            if (zone < 1 || post > target) continue;
             if (post > bestPost || (post == bestPost && zone > bestZone))
             {
-                bestN = n;
+                bestValue = value;
                 bestPost = post;
                 bestZone = zone;
             }
         }
-        return bestPost > 0 ? bestN : 3;
+        return bestPost > 0 ? bestValue : K.MAX_WHEEL_STACK_VALUE;
     }
+
+    internal static int BestN(int target) => BestStackValue(target);
+
+    internal static IEnumerable<int> ValidStackValues(int target)
+    {
+        for (int value = K.MIN_WHEEL_STACK_VALUE; value <= K.MAX_WHEEL_STACK_VALUE; value++)
+        {
+            int stack = StackFromValue(value);
+            int zone = Zone(target, stack);
+            int post = zone * stack;
+            if (zone >= 1 && post <= target)
+            {
+                yield return value;
+            }
+        }
+    }
+
+    internal static int StackFromValue(int wheelStackValue) => wheelStackValue + 1;
 
     // min(target/stack, COLS-1)  — cap leaves 1 slot for the WHEEL token
     internal static int Zone(int target, int stack) =>
@@ -31,7 +46,7 @@ internal static class WMath
 
     internal static WLock MakeLock(int sym, int target, int fireSpin, int n)
     {
-        int stack = 1 << n;
+        int stack = StackFromValue(n);
         int zone  = Zone(target, stack);
         int post  = zone * stack;
         return new WLock { Sym=sym, FireSpin=fireSpin, Stack=stack,
@@ -42,8 +57,8 @@ internal static class WMath
         int sym, int total, int spin1, int n1, int spin2, int n2, int t1)
     {
         int t2 = total - t1;
-        int s1=1<<n1, z1=Zone(t1,s1);
-        int s2=1<<n2, z2=Zone(t2,s2);
+        int s1=StackFromValue(n1), z1=Zone(t1,s1);
+        int s2=StackFromValue(n2), z2=Zone(t2,s2);
         var lk1 = new WLock { Sym=sym, FireSpin=spin1, Stack=s1, Zone=z1,
                                Pre=Math.Max(0,t1-z1*s1), Post=z1*s1 };
         var lk2 = new WLock { Sym=sym, FireSpin=spin2, Stack=s2, Zone=z2, Pre=0, Post=z2*s2 };
@@ -66,7 +81,7 @@ internal static class WMath
         {
             wSpins.Add(f.Spin);
             int t   = targets.GetValueOrDefault(f.WSym, 0);
-            int st  = 1 << f.WN;
+            int st  = StackFromValue(f.WN);
             int z   = Zone(t, st);
             int pre = Math.Max(0, t - z * st);
             if (pre > 0) tasks.Add((pre, f.Spin - 1));

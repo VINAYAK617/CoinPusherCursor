@@ -360,7 +360,7 @@ internal sealed class Builder
     private static FP MakeFP(PlacedFeat f)
     {
         var fp = new FP { FeatId = f.Id };
-        if (f.Id == "WHEEL")         { fp.WheelSym = f.WSym; fp.WheelStack = 1 << f.WN; }
+        if (f.Id == "WHEEL")         { fp.WheelSym = f.WSym; fp.WheelStack = WMath.StackFromValue(f.WN); }
         if (f.Id == "PRIZE_UPGRADE") { fp.PrupSym  = f.PrupSym; fp.PrupTier = f.PrupTier; }
         return fp;
     }

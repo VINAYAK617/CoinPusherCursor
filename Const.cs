@@ -20,6 +20,8 @@ internal static class K
     internal const int MAX_SPINS  = 8;
     internal const int MIN_WHEEL_STACK_VALUE = 1;
     internal const int MAX_WHEEL_STACK_VALUE = 3;
+    internal const double P_WHEEL_STACK_VALUE_1 = 0.34;
+    internal const double P_WHEEL_STACK_VALUE_2 = 0.33;
 
     // ── Optional-feature probability ──────────────────────────────────────
     //

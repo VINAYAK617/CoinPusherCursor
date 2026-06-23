@@ -32,7 +32,7 @@ internal sealed class WheelFeat : Feat
         if (sym == 0) return null;
         if (!ctx.Input.Targets.TryGetValue(sym, out int tgt) || tgt <= 0) return null;
 
-        int n = WMath.BestN(tgt), stack = 1 << n, zone = WMath.Zone(tgt, stack);
+        int n = WMath.BestN(tgt), stack = WMath.StackFromValue(n), zone = WMath.Zone(tgt, stack);
         if (zone == 0) return null;
 
         bool isMulti = ctx.Done.Any(f => f.Id == "WHEEL" && f.WSym == sym);
@@ -49,7 +49,7 @@ internal sealed class WheelFeat : Feat
         // Don't overflow a spin's zone with multiple WHEELs
         int existZone = ctx.Done
             .Where(f => f.Id == "WHEEL" && f.Spin == spin)
-            .Sum(f => ctx.Input.Targets.TryGetValue(f.WSym, out int ft) ? WMath.Zone(ft, 1 << f.WN) : 0);
+            .Sum(f => ctx.Input.Targets.TryGetValue(f.WSym, out int ft) ? WMath.Zone(ft, WMath.StackFromValue(f.WN)) : 0);
         if (existZone + zone > K.COLS - 1) return null;
 
         return new PlacedFeat { Id="WHEEL", Spin=spin, Col=col, WSym=sym, WN=n };

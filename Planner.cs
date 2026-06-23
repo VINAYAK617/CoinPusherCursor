@@ -212,8 +212,8 @@ public sealed class Planner
         foreach (int sym in ordered)
         {
             int tgt     = _inp.Targets[sym];
-            int n       = WMath.BestN(tgt);
-            int stack   = 1 << n;
+            int n       = PickWheelN(tgt, allowVariation: false);
+            int stack   = WMath.StackFromValue(n);
             int zone    = WMath.Zone(tgt, stack);
             int physNew = zone + Math.Max(0, tgt - zone * stack);
             if (physNew >= tgt) continue;  // no compression benefit
@@ -312,7 +312,9 @@ public sealed class Planner
     private List<int> BuildWheelOrder(List<int> winSyms, IReadOnlyDictionary<int, int> nonWinTargets,
                                       int wheels, int nonWinWheels)
     {
-        var winOrder = winSyms.OrderByDescending(s => _inp.Targets[s]).ToList();
+        var winOrder = IsHighPressureTicket()
+            ? winSyms.OrderByDescending(s => _inp.Targets[s]).ToList()
+            : winSyms.OrderBy(_ => _rng.Next()).ToList();
         var nonWinOrder = nonWinTargets
             .Where(kv => kv.Value >= 2)
             .OrderByDescending(kv => kv.Value)
@@ -636,13 +638,13 @@ public sealed class Planner
             if (ord.Count > 1)
             {
                 int t1 = _rng.Next(Math.Max(1, tgt / 4), Math.Max(2, 3 * tgt / 4));
-                int n1 = WMath.BestN(t1), n2 = WMath.BestN(tgt - t1);
+                int n1 = PickWheelN(t1, allowVariation: false), n2 = PickWheelN(tgt - t1, allowVariation: false);
                 var (lk1, lk2) = WMath.MakeMultiLock(sym, tgt, ord[0].Spin, n1, ord[1].Spin, n2, t1);
 
                 if (lk1.Zone == 0 || lk2.Zone == 0)
                 {
                     var best = lk1.Zone >= lk2.Zone ? ord[0] : ord[1];
-                    locks.Add(WMath.MakeLock(sym, tgt, best.Spin, WMath.BestN(tgt)));
+                    locks.Add(WMath.MakeLock(sym, tgt, best.Spin, PickWheelN(tgt, allowVariation: false)));
                     log.Add($"  WHEEL sym={sym} multi-degenerate → single@S{best.Spin}");
                 }
                 else
@@ -653,12 +655,44 @@ public sealed class Planner
             }
             else
             {
-                var lk = WMath.MakeLock(sym, tgt, ord[0].Spin, WMath.BestN(tgt));
+                var wheelFeature = ord[0];
+                var allowVariation = !IsHighPressureTicket() && tgt <= 15;
+                var lk = WMath.MakeLock(sym, tgt, wheelFeature.Spin, PickWheelN(tgt, allowVariation));
                 locks.Add(lk);
-                log.Add($"  WHEEL sym={sym} tgt={tgt} stack={lk.Stack} pre={lk.Pre} post={lk.Post} zone={lk.Zone} @S{ord[0].Spin}");
+                log.Add($"  WHEEL sym={sym} tgt={tgt} stack={lk.Stack} pre={lk.Pre} post={lk.Post} zone={lk.Zone} @S{wheelFeature.Spin}");
             }
         }
         return locks;
+    }
+
+    private int PickWheelN(int target, bool allowVariation)
+    {
+        var candidates = WMath.ValidStackValues(target).ToArray();
+        if (candidates.Length == 0) return WMath.BestN(target);
+        if (!allowVariation) return WMath.BestN(target);
+        if (target > 10)
+        {
+            candidates = candidates.Where(v => v > 1).ToArray();
+            if (candidates.Length == 0) return WMath.BestN(target);
+        }
+
+        if (target >= 24 && candidates.Contains(3) && _rng.NextDouble() < 0.70)
+        {
+            return 3;
+        }
+
+        var roll = _rng.NextDouble();
+        if (candidates.Contains(1) && roll < K.P_WHEEL_STACK_VALUE_1)
+        {
+            return 1;
+        }
+
+        if (candidates.Contains(2) && roll < K.P_WHEEL_STACK_VALUE_1 + K.P_WHEEL_STACK_VALUE_2)
+        {
+            return 2;
+        }
+
+        return candidates.Contains(3) ? 3 : candidates[^1];
     }
 }
 
